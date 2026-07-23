@@ -1,0 +1,11 @@
+{
+  "name": "gm-pulse",
+  "version": "1.1.0",
+  "description": "GM Pulse — xodimlar samaradorligi nazorati (PWA + Supabase)",
+  "scripts": {
+    "start": "sed -i \"s|__SUPABASE_URL__|${SUPABASE_URL}|g; s|__SUPABASE_ANON_KEY__|${SUPABASE_ANON_KEY}|g\" index.html && npx serve . -l ${PORT:-3000} --no-clipboard"
+  },
+  "dependencies": {
+    "serve": "^14.2.1"
+  }
+}
