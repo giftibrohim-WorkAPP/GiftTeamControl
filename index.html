@@ -314,6 +314,9 @@ html,body{overflow-x:hidden;max-width:100%}
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>
             </button>
             <button class="icon-btn" id="themeBtn" title="Tungi/kunduzgi rejim"></button>
+            <button class="icon-btn" id="topLogout" title="Chiqish (boshqa hisob bilan kirish)" onclick="logout()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 4h3.5A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5H15M10 8l-4 4 4 4M6 12h10"/></svg>
+            </button>
           </div>
         </div>
         <div id="page"></div>
@@ -1077,8 +1080,10 @@ function pgTasks(){
         const e = empById(t.emp);
         const late = t.status !== "done" && t.due < TODAY;
         return `<div class="task-card">
-          <div class="ttl">${esc(t.title)}</div>
-          <div class="desc">${esc(t.desc)}</div>
+          <div style="cursor:pointer" onclick="openTaskView('${t.id}')" title="Batafsil ochish">
+            <div class="ttl">${esc(t.title)}</div>
+            <div class="desc">${esc(t.desc).slice(0,90)}${(t.desc||"").length>90?"…":""}</div>
+          </div>
           <div class="foot">${avatarHtml(e,"sm")} <span>${esc(e.name.split(" ")[0])}</span>
             <span class="due num ${late?"late":""}">${late?"⚠ ":""}${uzDate(t.due)}</span></div>
           ${taskActions(t)}
@@ -1090,7 +1095,34 @@ function pgTasks(){
     Xodim vazifani tugatganda u avtomatik <b>«Tasdiq kutilmoqda»</b> bosqichiga o'tadi — «Bajarildi»ga faqat bo'lim boshlig'i tasdig'idan keyin o'tkaziladi.</p>`;
   return `<div class="filters">${addBtn}</div>${note}<div class="kanban">${cols}</div>`;
 }
+/* Vazifa batafsil oynasi */
+function openTaskView(id){
+  const t = TASKS.find(x => String(x.id) === String(id));
+  if (!t) return;
+  const e = empById(t.emp), by = t.by ? empById(t.by) : null;
+  const stLbl = { new:"Vazifa tushdi", progress:"Jarayonda", review:"Tasdiq kutilmoqda", done:"Bajarildi" };
+  const stCls = { new:"info", progress:"gold", review:"danger", done:"success" };
+  const late = t.status !== "done" && t.due < TODAY;
+  openModal(`
+    <h3 style="padding-right:20px">${esc(t.title)}</h3>
+    <div style="margin:8px 0 4px"><span class="tag ${stCls[t.status]}">${stLbl[t.status]}</span>
+      ${late ? '<span class="tag danger">⚠ muddati o\'tgan</span>' : ""}</div>
+    <p style="font-size:13.5px;margin:12px 0;white-space:pre-wrap">${esc(t.desc) || "<i style='color:var(--muted)'>Tavsif yozilmagan</i>"}</p>
+    <div style="display:grid;gap:9px;font-size:13px;background:var(--surface2);border-radius:12px;padding:13px 14px">
+      <div style="display:flex;align-items:center;gap:9px">${avatarHtml(e,"sm")}
+        <div><b>${esc(e.name)}</b><br><span style="color:var(--muted);font-size:11.5px">bajaruvchi · ${esc(e.pos)}</span></div></div>
+      ${by ? `<div style="display:flex;align-items:center;gap:9px">${avatarHtml(by,"sm")}
+        <div><b>${esc(by.name)}</b><br><span style="color:var(--muted);font-size:11.5px">vazifani bergan</span></div></div>` : ""}
+      <div><b class="num ${late?"":""}" style="${late?"color:var(--danger)":""}">Muddat: ${uzDate(t.due)}</b>
+        ${t.doneAt ? `<span style="color:var(--muted)"> · bajarildi: ${uzDate(t.doneAt)}</span>` : ""}</div>
+    </div>
+    <div class="foot" style="justify-content:space-between">
+      <div style="display:flex;gap:7px">${taskActions(t).replace('class="actions"','style="display:flex;gap:7px"')}</div>
+      <button class="btn ghost" onclick="closeModal()">Yopish</button>
+    </div>`);
+}
 async function moveTask(id, status, returned=false){
+  closeModal();
   const t = TASKS.find(x => String(x.id) === String(id));
   if (CLOUD) {
     const { error } = await sb.from("tasks").update({ status }).eq("id", t.id);
@@ -1103,6 +1135,7 @@ async function moveTask(id, status, returned=false){
   render();
 }
 async function approveTask(id){
+  closeModal();
   const t = TASKS.find(x => String(x.id) === String(id));
   if (CLOUD) {
     const { error } = await sb.from("tasks").update({ status: "done", done_at: TODAY }).eq("id", t.id);
