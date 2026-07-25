@@ -556,14 +556,53 @@ function earnedToDate(e){
            total: base + sumFB(e.id,"bonus") - sumFB(e.id,"fine") };
 }
 // Samaradorlik: 60% bajarilgan vazifalar + 20% muddatida topshirish + 20% o'z vaqtida kelish
-function efficiency(id){
-  const t = TASKS.filter(x => x.emp === id);
+// effDetail — KPI nimadan yig'ilganining to'liq raqamlari
+function effDetail(id){
+  const t = TASKS.filter(x => String(x.emp) === String(id));
   const done = t.filter(x => x.status === "done");
-  const tScore = t.length ? done.length / t.length : 0.75;
-  const onTime = done.length ? done.filter(x => !x.doneAt || x.doneAt <= x.due).length / done.length : 1;
+  const onTime = done.filter(x => !x.doneAt || x.doneAt <= x.due);
   const at = empAttendance(id);
-  const pScore = at.length ? at.filter(a => !a.late).length / at.length : 1;
-  return Math.round((tScore * 0.6 + onTime * 0.2 + pScore * 0.2) * 100);
+  const punct = at.filter(a => !a.late);
+  const tScore = t.length ? done.length / t.length : 0.75;
+  const oScore = done.length ? onTime.length / done.length : 1;
+  const pScore = at.length ? punct.length / at.length : 1;
+  return {
+    tTotal: t.length, tDone: done.length, onTime: onTime.length,
+    days: at.length, punct: punct.length,
+    tPc: Math.round(tScore * 100), oPc: Math.round(oScore * 100), pPc: Math.round(pScore * 100),
+    kpi: Math.round((tScore * 0.6 + oScore * 0.2 + pScore * 0.2) * 100),
+  };
+}
+function efficiency(id){ return effDetail(id).kpi; }
+// Bo'lim bo'yicha jamlangan raqamlar
+function deptDetail(deptId){
+  const list = EMPLOYEES.filter(e => String(e.dept) === String(deptId));
+  const a = { tTotal:0, tDone:0, onTime:0, days:0, punct:0, emps:list.length };
+  list.forEach(e => { const d = effDetail(e.id);
+    a.tTotal+=d.tTotal; a.tDone+=d.tDone; a.onTime+=d.onTime; a.days+=d.days; a.punct+=d.punct; });
+  a.late = a.days - a.punct;
+  a.kpi = deptEfficiency(deptId);
+  return a;
+}
+/* KPI tafsiloti bloki (profil va shaxsiy sahifada) */
+function kpiBreakdown(e){
+  const d = effDetail(e.id);
+  const row = (label, val, pc, weight) => `
+    <div style="display:flex;align-items:center;gap:10px;margin-top:9px;font-size:12.5px">
+      <span style="flex:1"><b>${label}</b><br><span style="color:var(--muted)">${val}</span></span>
+      <div class="track" style="flex:1;height:8px;background:var(--surface2);border-radius:99px;overflow:hidden">
+        <div style="height:100%;width:${pc}%;background:var(--accent);border-radius:99px"></div></div>
+      <b class="num" style="width:44px;text-align:right">${pc}%</b>
+      <span class="tag muted">${weight}</span>
+    </div>`;
+  return `<div class="card" style="padding:15px 17px;margin-bottom:15px">
+    <b style="font-size:14px">KPI ${d.kpi}% — qanday hisoblandi</b>
+    ${row("Vazifalar bajarilishi", `${d.tTotal} tadan ${d.tDone} tasi bajarildi`, d.tPc, "ulushi 60%")}
+    ${row("Muddatida topshirish", d.tDone ? `bajarilgan ${d.tDone} tadan ${d.onTime} tasi o'z muddatida` : "hali bajarilgan vazifa yo'q", d.oPc, "ulushi 20%")}
+    ${row("O'z vaqtida kelish", `${d.days} ish kunidan ${d.punct} kuni 9:00 gacha kelgan`, d.pPc, "ulushi 20%")}
+    <div style="font-size:11.5px;color:var(--muted);margin-top:11px;border-top:1px solid var(--line);padding-top:9px">
+      Formula: ${d.tPc}%×0.6 + ${d.oPc}%×0.2 + ${d.pPc}%×0.2 = <b>${d.kpi}%</b></div>
+  </div>`;
 }
 function deptEfficiency(deptId){
   const list = EMPLOYEES.filter(e => e.dept === deptId);
@@ -607,11 +646,15 @@ function svgLineChart(){
 }
 function deptBars(){
   return DEPTS.map(d => {
-    const v = deptEfficiency(d.id);
-    return `<div class="bar-row">
-      <span class="nm">${d.name.replace(" bo'limi","")}</span>
-      <div class="track"><div class="fill" style="width:${v}%;background:${d.color}"></div></div>
-      <span class="pc num">${v}%</span></div>`;
+    const dd = deptDetail(d.id);
+    return `<div style="margin-bottom:13px">
+      <div class="bar-row" style="margin-bottom:4px">
+        <span class="nm">${d.name.replace(" bo'limi","")}</span>
+        <div class="track"><div class="fill" style="width:${dd.kpi}%;background:${d.color}"></div></div>
+        <span class="pc num">${dd.kpi}%</span></div>
+      <div style="font-size:11.5px;color:var(--muted);padding-left:102px">
+        ${dd.emps} xodim · vazifa: ${dd.tDone}/${dd.tTotal} bajarildi (${dd.onTime} tasi muddatida) · kechikish: ${dd.late} marta</div>
+    </div>`;
   }).join("");
 }
 
@@ -804,6 +847,7 @@ function pgProfile(){
       <div class="card stat"><div class="lbl">${IC.up} Bonus / Jarima</div>
         <div class="val num" style="font-size:18px"><span style="color:var(--success)">+${fmtShort(earn.bonus)}</span> · <span style="color:var(--danger)">−${fmtShort(earn.fine)}</span></div></div>
     </div>
+    ${kpiBreakdown(e)}
     ${docsCard}
     <h3 class="section-title">Vazifalari <span>${myTasks.length} ta</span></h3>
     <div class="card">${myTasks.length ? myTasks.map(t => `
@@ -949,10 +993,27 @@ function pgDashboard(){
       </div>
     </div>`;
 
+  // Xodimlar kesimida KPI raqamlari (nimadan hisoblanayotgani ko'rinadi)
+  const kpiTable = `
+    <h3 class="section-title">Samaradorlik tafsiloti <span>KPI = 60% vazifa + 20% muddatida + 20% vaqtida kelish</span></h3>
+    <div class="card t-wrap"><table>
+      <tr><th>Xodim</th><th>Vazifalar</th><th>Muddatida</th><th>Vaqtida kelish</th><th>KPI</th></tr>
+      ${[...scope].sort((a,b)=>efficiency(b.id)-efficiency(a.id)).map(e => { const d = effDetail(e.id); return `
+      <tr class="rowhover" style="cursor:pointer" onclick="viewEmp('${e.id}')">
+        <td><div style="display:flex;align-items:center;gap:9px">${avatarHtml(e,"sm")} ${esc(e.name)}</div></td>
+        <td class="num">${d.tDone}/${d.tTotal} bajarildi <span style="color:var(--muted)">(${d.tPc}%)</span></td>
+        <td class="num">${d.tDone ? `${d.onTime}/${d.tDone} <span style="color:var(--muted)">(${d.oPc}%)</span>` : "—"}</td>
+        <td class="num">${d.punct}/${d.days} kun <span style="color:var(--muted)">(${d.pPc}%)</span>
+          ${d.days - d.punct > 0 ? `<span class="tag danger">${d.days - d.punct} kechikish</span>` : ""}</td>
+        <td><b class="num" style="font-size:14.5px">${d.kpi}%</b></td>
+      </tr>`; }).join("")}
+    </table></div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:8px">Qatorni bossangiz xodimning to'liq profili ochiladi.</p>`;
+
   // Boshliq dashboardida shaxsiy karta ham (o'ziniki ham ko'rinadi)
   let personal = "";
   if (USER.role === "boshliq") personal = `<h3 class="section-title">Mening shaxsiy ko'rsatkichlarim</h3>` + personalBlock(USER);
-  return stats + charts + personal;
+  return stats + charts + kpiTable + personal;
 }
 
 /* ---------- 2. MENING SAHIFAM (xodim / boshliq) ---------- */
@@ -989,6 +1050,7 @@ function personalBlock(e){
         <div class="delta" style="color:var(--muted)">${lateCount} marta kechikish</div></div>
       <div class="card stat"><div class="lbl">${IC.dash} Samaradorlik</div><div class="val num">${eff}%</div></div>
     </div>
+    ${kpiBreakdown(e)}
     <div class="grid" style="grid-template-columns:1fr 1fr">
       <div>
         <h3 class="section-title">Jarima / bonus tarixi</h3>
