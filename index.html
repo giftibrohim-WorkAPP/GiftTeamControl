@@ -538,11 +538,14 @@ function roleTag(r){
 /* ============ HISOB-KITOBLAR ============ */
 function minutes(t){ const [h,m] = t.split(":").map(Number); return h*60+m; }
 const LUNCH_END = "14:00";
-/* Qo'shimcha vaqt (9:00 dan oldin + 18:00 dan keyin), daqiqada */
+const OT_GRACE = 10; // daqiqa: shu oraliqdagi erta kelish/kech ketish ortiqcha vaqt hisoblanmaydi
+/* Qo'shimcha vaqt (9:00 dan oldin + 18:00 dan keyin), daqiqada.
+   10 daqiqagacha farq imtiyoz — na hisoblanadi, na tasdiq so'raladi. */
 function otMinutes(a){
   if (!a.out) return 0;
-  return Math.max(0, minutes(WORK_START) - minutes(a.in)) +
-         Math.max(0, minutes(a.out) - minutes("18:00"));
+  const early = Math.max(0, minutes(WORK_START) - minutes(a.in));
+  const lateOut = Math.max(0, minutes(a.out) - minutes("18:00"));
+  return (early > OT_GRACE ? early : 0) + (lateOut > OT_GRACE ? lateOut : 0);
 }
 /* Ishlagan soat: obed 1 soat ayriladi; qo'shimcha vaqt FAQAT tasdiqlansa qo'shiladi;
    obeddan 14:00 dan kech qaytilsa, ortiqcha daqiqalar ham ayriladi */
@@ -1112,7 +1115,7 @@ function personalBlock(e){
          ${lunchBtn}
          <button class="btn ghost" onclick="checkOut()">${IC.out} Ketdim</button>
          ${minutes(new Date().getHours()+":"+new Date().getMinutes()) ? "" : ""}
-         <span style="font-size:11px;color:var(--muted)">18:00 dan keyin ishlasangiz, ortiqcha vaqt boshliq tasdig'i bilan hisoblanadi</span>`
+         <span style="font-size:11px;color:var(--muted)">10 daqiqagacha erta kelish/kech ketish e'tiborga olinmaydi; undan ko'p qo'shimcha vaqt boshliq tasdig'i bilan hisoblanadi</span>`
       : `<div class="check-state">Bugun: <span class="num">${todayAtt.in} — ${todayAtt.out}</span> ${lunchInfo}</div>
          <span class="tag success">Ish kuni yakunlangan</span> ${otInfo}`);
 
@@ -1366,7 +1369,7 @@ function pgAttendance(){
         <span style="font-size:12.5px;color:var(--muted)">${OFFICE
           ? `Belgilangan ✓ — xodimlar faqat ${OFFICE.radius} m radiusda belgilay oladi`
           : `Hali belgilanmagan — hozircha istalgan joydan belgilash mumkin`}</span></div>
-      <select id="gfRadius" style="width:110px">${[50,80,100,150].map(r=>`<option value="${r}" ${(OFFICE?.radius||100)===r?"selected":""}>${r} m</option>`).join("")}</select>
+      <select id="gfRadius" style="width:110px" onchange="updateRadius()">${[30,50,80,100,150,200,300].map(r=>`<option value="${r}" ${(OFFICE?.radius||100)===r?"selected":""}>${r} m</option>`).join("")}</select>
       <button class="btn primary sm" onclick="setOffice()">Shu yerni ishxona deb belgilash</button>
       <button class="btn ghost sm" onclick="openFieldModal()">🚶 Tashqarida ishlash ruxsati</button>
     </div>` : "";
@@ -1572,6 +1575,17 @@ async function checkIn(){
   toast("Kelish qayd etildi: " + t + " 📍");
   render(); startClock();
 }
+/* Radiusni nuqtani o'zgartirmasdan saqlash (tanlov o'zgarganda avtomatik) */
+async function updateRadius(){
+  const radius = +$("#gfRadius").value || 100;
+  if (!OFFICE) return; // nuqta hali belgilanmagan — "belgilash" tugmasi bilan birga saqlanadi
+  if (CLOUD) {
+    const { error } = await sb.from("settings").update({ radius_m: radius, updated_at: new Date().toISOString() }).eq("id", 1);
+    if (error) return toast("Xatolik: " + error.message);
+  }
+  OFFICE.radius = radius;
+  toast("Radius yangilandi: " + radius + " m (nuqta o'zgarmadi)"); render();
+}
 async function setOffice(){
   toast("Joylashuv aniqlanmoqda...");
   const g = await getGeo();
@@ -1590,7 +1604,7 @@ async function checkOut(){
   const t = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
   toast("Joylashuv aniqlanmoqda...");
   if (!(await geoGuard())) return;
-  const otAfter = Math.max(0, minutes(WORK_START) - minutes(a.in)) + Math.max(0, minutes(t) - minutes("18:00"));
+  const otAfter = otMinutes({ in: a.in, out: t });
   const otStatus = otAfter > 0 ? "pending" : "none";
   if (CLOUD) {
     const { error } = await sb.from("attendance").update({ check_out: t, ot_status: otStatus }).eq("id", a.id);
