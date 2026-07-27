@@ -457,7 +457,7 @@ let savedTheme = null;
 function saveState(){
   if (!canStore || CLOUD) return;
   try { localStorage.setItem(STORE_KEY, JSON.stringify({
-    EMPLOYEES, TASKS, FINEBONUS, ATTENDANCE, OFFICE, theme: document.documentElement.dataset.theme })); } catch(e){}
+    EMPLOYEES, TASKS, FINEBONUS, ATTENDANCE, OFFICE, FIELD_DAYS, theme: document.documentElement.dataset.theme })); } catch(e){}
 }
 function loadState(){
   if (!canStore || CLOUD) return;
@@ -469,6 +469,7 @@ function loadState(){
     if (s.FINEBONUS) FINEBONUS = s.FINEBONUS;
     if (s.ATTENDANCE) ATTENDANCE = s.ATTENDANCE;
     if (s.OFFICE) OFFICE = s.OFFICE;
+    if (s.FIELD_DAYS) FIELD_DAYS = s.FIELD_DAYS;
     if (s.theme) savedTheme = s.theme;
   } catch(e){}
 }
@@ -501,6 +502,11 @@ const uzDate = iso => { const [y,m,d] = iso.split("-"); return `${d}.${m}.${y}`;
 
 /* Geofence: ishxona nuqtasi va radius (metr) */
 let OFFICE = null; // { lat, lng, radius }
+/* Kunlik "tashqarida ishlash" ruxsatlari — admin belgilaydi */
+let FIELD_DAYS = [
+  { id: 1, emp: 9, date: "2026-07-23", note: "Mijozlar bilan uchrashuvlar" },
+];
+const isFieldDay = (emp, date) => FIELD_DAYS.some(f => String(f.emp) === String(emp) && f.date === date);
 function distMeters(la1, lo1, la2, lo2){
   const R = 6371000, r = x => x * Math.PI / 180;
   const dla = r(la2 - la1), dlo = r(lo2 - lo1);
@@ -531,9 +537,23 @@ function roleTag(r){
 
 /* ============ HISOB-KITOBLAR ============ */
 function minutes(t){ const [h,m] = t.split(":").map(Number); return h*60+m; }
+const LUNCH_END = "14:00";
+/* Qo'shimcha vaqt (9:00 dan oldin + 18:00 dan keyin), daqiqada */
+function otMinutes(a){
+  if (!a.out) return 0;
+  return Math.max(0, minutes(WORK_START) - minutes(a.in)) +
+         Math.max(0, minutes(a.out) - minutes("18:00"));
+}
+/* Ishlagan soat: obed 1 soat ayriladi; qo'shimcha vaqt FAQAT tasdiqlansa qo'shiladi;
+   obeddan 14:00 dan kech qaytilsa, ortiqcha daqiqalar ham ayriladi */
 function workedHours(a){
   if (!a.out) return null;
-  return Math.max(0, (minutes(a.out) - minutes(a.in)) / 60 - 1); // obed (13:00–14:00) ayriladi
+  const approved = a.ot === "approved";
+  const effIn  = approved ? minutes(a.in)  : Math.max(minutes(a.in),  minutes(WORK_START));
+  const effOut = approved ? minutes(a.out) : Math.min(minutes(a.out), minutes("18:00"));
+  let h = Math.max(0, (effOut - effIn) / 60 - 1); // obed (13:00–14:00)
+  if (a.lunchBack) h -= Math.max(0, (minutes(a.lunchBack) - minutes(LUNCH_END)) / 60);
+  return Math.max(0, h);
 }
 function empAttendance(id){ return ATTENDANCE.filter(a => a.emp === id); }
 function empFB(id){ return FINEBONUS.filter(f => f.emp === id); }
@@ -562,7 +582,7 @@ function effDetail(id){
   const done = t.filter(x => x.status === "done");
   const onTime = done.filter(x => !x.doneAt || x.doneAt <= x.due);
   const at = empAttendance(id);
-  const punct = at.filter(a => !a.late);
+  const punct = at.filter(a => !a.late && !a.lunchLate);
   const tScore = t.length ? done.length / t.length : 0.75;
   const oScore = done.length ? onTime.length / done.length : 1;
   const pScore = at.length ? punct.length / at.length : 1;
@@ -673,6 +693,7 @@ const IC = {
   moon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.5 14.5A8.5 8.5 0 019.5 3.5a8.5 8.5 0 1011 11z"/></svg>`,
   out:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 4h3.5A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5H15M10 8l-4 4 4 4M6 12h10"/></svg>`,
   calc:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8.5 7h7M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 16h.01"/></svg>`,
+  trophy:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 01-10 0V4zM7 6H4.5A1.5 1.5 0 003 7.5C3 10 5 11 7 11M17 6h2.5A1.5 1.5 0 0121 7.5C21 10 19 11 17 11"/></svg>`,
 };
 
 /* ============ BILDIRISHNOMALAR (ilova ichida) ============ */
@@ -690,6 +711,8 @@ function notifList(){
   });
   TASKS.filter(t => (t.emp===USER.id || ids.includes(t.emp)) && t.status!=="done" && t.due < TODAY && !seen.has(t.id))
     .forEach(t => items.push({ ic:"⚠️", cls:"danger", text:`Muddati o'tdi: «${t.title}» — ${empById(t.emp).name.split(" ")[0]}`, go:"tasks" }));
+  ATTENDANCE.filter(a => a.ot === "pending" && canApproveOT(a) && ids.includes(a.emp)).forEach(a =>
+    items.push({ ic:"⏱", cls:"gold", text:`${empById(a.emp).name.split(" ")[0]} — qo'shimcha ${otMinutes(a)} daqiqa tasdiq kutmoqda (${uzDate(a.date)})`, go:"attendance" }));
   if (USER.role === "admin" || USER.role === "rahbar")
     EMPLOYEES.filter(e => e.contract && daysTo(e.contract) <= 30).forEach(e =>
       items.push({ ic:"📄", cls:"gold", text: daysTo(e.contract) < 0
@@ -748,6 +771,7 @@ function navItems(){
   if (USER.role !== "xodim") n.push({ id:"employees", label:"Xodimlar", icon:IC.users });
   n.push({ id:"tasks", label:"Vazifalar", icon:IC.tasks });
   n.push({ id:"attendance", label:"Davomat", icon:IC.clock });
+  n.push({ id:"rating", label:"Reyting", icon:IC.trophy });
   n.push({ id:"finebonus", label:"Jarima / Bonus", icon:IC.money });
   if (USER.role !== "xodim") n.push({ id:"payroll", label:"Hisob-kitob", icon:IC.calc });
   return n;
@@ -781,6 +805,7 @@ const TITLES = {
   finebonus:  ["Jarima va Bonuslar", "Sabab va sanasi bilan, shaffof"],
   payroll:    ["Hisob-kitob", "Oylik maoshdan kelib chiqqan to'lov hisobi"],
   profile:    ["Xodim profili", "To'liq ma'lumot"],
+  rating:     ["Reyting", "Barcha xodimlarga ochiq — KPI bo'yicha halol saralangan"],
 };
 let PROFILE_ID = null;
 function viewEmp(id){ PROFILE_ID = id; go("profile"); }
@@ -792,7 +817,7 @@ function render(){
   $("#pageSub").textContent = s;
   const fn = { dashboard: pgDashboard, me: pgMe, employees: pgEmployees,
                tasks: pgTasks, attendance: pgAttendance, finebonus: pgFineBonus,
-               payroll: pgPayroll, profile: pgProfile }[PAGE];
+               payroll: pgPayroll, profile: pgProfile, rating: pgRating }[PAGE];
   $("#page").innerHTML = fn();
   renderBell();
   saveState();
@@ -869,7 +894,10 @@ function pgProfile(){
 }
 // Profil ochilganda hujjatlar ro'yxatini yuklash
 const _origRender = render;
-render = function(){ _origRender(); if (PAGE === "profile" && CLOUD) loadDocs(PROFILE_ID); };
+render = function(){ _origRender();
+  if (PAGE === "profile" && CLOUD) loadDocs(PROFILE_ID);
+  if (PAGE === "rating" && CLOUD) loadRating();
+};
 
 /* --- Hujjatlar (Supabase Storage) --- */
 async function loadDocs(empId){
@@ -903,6 +931,49 @@ async function deleteDoc(empId, name){
   const { error } = await sb.storage.from("docs").remove([`${empId}/${name}`]);
   if (error) return toast("Xatolik: " + error.message);
   toast("Hujjat o'chirildi"); loadDocs(empId);
+}
+
+/* ---------- REYTING (hammaga ochiq, KPI bo'yicha) ---------- */
+function kpiFromNums(n){
+  const tS = n.t_total ? n.t_done / n.t_total : 0.75;
+  const oS = n.t_done ? n.on_time / n.t_done : 1;
+  const pS = n.days ? n.punct / n.days : 1;
+  return Math.round((tS * 0.6 + oS * 0.2 + pS * 0.2) * 100);
+}
+function ratingRows(list){
+  const medal = i => i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `<b class="num" style="color:var(--muted)">${i+1}</b>`;
+  return list.map((r, i) => {
+    const me = String(r.id) === String(USER.id);
+    const d = r.dept ? deptById(r.dept) : null;
+    return `<div class="fb-item" style="${me ? "background:var(--accent-soft);border-radius:12px" : ""}">
+      <div style="width:30px;text-align:center;font-size:17px;align-self:center">${medal(i)}</div>
+      <div class="avatar sm" style="background:${r.color};align-self:center">${initials(r.name)}</div>
+      <div class="meta"><b>${esc(r.name)}${me ? " (siz)" : ""} ${d ? `<span class="tag" style="background:${d.color}22;color:${d.color}">${d.name.replace(" bo'limi","")}</span>` : ""}</b>
+        <span>vazifa ${r.t_done}/${r.t_total} · muddatida ${r.on_time} · vaqtida kelish ${r.punct}/${r.days} kun · ${(+r.hours).toFixed(1)} soat</span></div>
+      <div class="amount num">${r.kpi}%<small>KPI</small></div>
+    </div>`;
+  }).join("");
+}
+function pgRating(){
+  const note = `<p style="font-size:12.5px;color:var(--muted);margin-bottom:13px">
+    Reyting hammaga bir xil ochiq formula bilan tuziladi: <b>KPI = 60% vazifa bajarilishi + 20% muddatida topshirish + 20% o'z vaqtida kelish</b>
+    (obeddan 14:00 dan kech qaytish ham kechikish hisoblanadi). Maosh va jarima ma'lumotlari reytingda ko'rsatilmaydi.</p>`;
+  if (CLOUD) return note + `<div class="card" id="ratingList"><div class="empty">Yuklanmoqda...</div></div>`;
+  const list = EMPLOYEES.filter(e => e.role !== "admin").map(e => {
+    const d = effDetail(e.id), earn = earnedToDate(e);
+    return { id: e.id, name: e.name, dept: e.dept, color: e.color,
+      t_total: d.tTotal, t_done: d.tDone, on_time: d.onTime, days: d.days, punct: d.punct,
+      hours: earn.hours, kpi: d.kpi };
+  }).sort((a,b) => b.kpi - a.kpi || b.hours - a.hours);
+  return note + `<div class="card">${ratingRows(list)}</div>`;
+}
+async function loadRating(){
+  const el = document.getElementById("ratingList"); if (!el) return;
+  const { data, error } = await sb.rpc("rating_data");
+  if (error) { el.innerHTML = `<div class="empty">Yuklanmadi: ${esc(error.message)}<br>supabase-update-2.sql bajarilganini tekshiring</div>`; return; }
+  const list = (data || []).map(r => ({ ...r, kpi: kpiFromNums(r) }))
+    .sort((a,b) => b.kpi - a.kpi || b.hours - a.hours);
+  el.innerHTML = ratingRows(list) || `<div class="empty">Ma'lumot yo'q</div>`;
 }
 
 /* ---------- HISOB-KITOB (payroll, soatbay) ---------- */
@@ -1024,13 +1095,26 @@ function personalBlock(e){
   const eff = efficiency(e.id);
   const lateCount = empAttendance(e.id).filter(a=>a.late).length;
 
+  const lunchInfo = todayAtt && todayAtt.lunchBack
+    ? `<span class="tag ${todayAtt.lunchLate?"danger":"success"}">obeddan ${todayAtt.lunchBack} da qaytgan${todayAtt.lunchLate?" (kech)":""}</span>` : "";
+  const lunchBtn = todayAtt && !todayAtt.out && !todayAtt.lunchBack
+    ? `<button class="btn ghost" onclick="checkLunch()">🍽 Obeddan qaytdim</button>
+       <span style="font-size:11px;color:var(--muted)">14:00 gacha bosing, kechiksangiz kechikish yoziladi</span>` : "";
+  const otInfo = todayAtt && todayAtt.out && otMinutes(todayAtt) > 0
+    ? `<span class="tag ${ {pending:"gold",approved:"success",rejected:"danger",none:"muted"}[todayAtt.ot||"none"] }">
+        qo'shimcha ${otMinutes(todayAtt)} daq — ${ {pending:"tasdiq kutilmoqda",approved:"tasdiqlangan ✓",rejected:"rad etilgan",none:"hisoblanmagan"}[todayAtt.ot||"none"] }</span>` : "";
+  const fieldToday = isFieldDay(e.id, TODAY)
+    ? `<span class="tag info">Bugun tashqarida ishlashga ruxsat berilgan — istalgan joydan belgilaysiz</span>` : "";
   const checkBtn = !todayAtt
     ? `<button class="btn primary" onclick="checkIn()">${IC.clock} Keldim</button>`
     : (!todayAtt.out
-      ? `<div class="check-state" style="color:var(--success)">Kelgan vaqt: <span class="num">${todayAtt.in}</span>${todayAtt.late?' <span class="tag danger">kechikish</span>':''}</div>
-         <button class="btn ghost" onclick="checkOut()">${IC.out} Ketdim</button>`
-      : `<div class="check-state">Bugun: <span class="num">${todayAtt.in} — ${todayAtt.out}</span></div>
-         <span class="tag success">Ish kuni yakunlangan</span>`);
+      ? `<div class="check-state" style="color:var(--success)">Kelgan vaqt: <span class="num">${todayAtt.in}</span>${todayAtt.late?' <span class="tag danger">kechikish</span>':''} ${lunchInfo}</div>
+         ${lunchBtn}
+         <button class="btn ghost" onclick="checkOut()">${IC.out} Ketdim</button>
+         ${minutes(new Date().getHours()+":"+new Date().getMinutes()) ? "" : ""}
+         <span style="font-size:11px;color:var(--muted)">18:00 dan keyin ishlasangiz, ortiqcha vaqt boshliq tasdig'i bilan hisoblanadi</span>`
+      : `<div class="check-state">Bugun: <span class="num">${todayAtt.in} — ${todayAtt.out}</span> ${lunchInfo}</div>
+         <span class="tag success">Ish kuni yakunlangan</span> ${otInfo}`);
 
   return `
     <div class="card clock-card">
@@ -1038,7 +1122,7 @@ function personalBlock(e){
         <div class="time num" id="liveClock">--:--</div>
         <div class="date">${CLOUD ? new Date().toLocaleDateString("uz-UZ",{weekday:"long",day:"numeric",month:"long",year:"numeric"}) : "Payshanba, 23-iyul 2026"} · ish vaqti 9:00–18:00 · obed 13:00–14:00</div>
       </div>
-      <div class="right">${checkBtn}</div>
+      <div class="right">${fieldToday}${checkBtn}</div>
     </div>
     <div class="grid stats">
       <div class="card stat"><div class="lbl">${IC.money} Oy boshidan topilgan</div><div class="val num">${fmtShort(earn.total)}</div>
@@ -1143,7 +1227,7 @@ function pgTasks(){
         const late = t.status !== "done" && t.due < TODAY;
         return `<div class="task-card">
           <div style="cursor:pointer" onclick="openTaskView('${t.id}')" title="Batafsil ochish">
-            <div class="ttl">${esc(t.title)}</div>
+            <div class="ttl">${t.rep && t.rep!=="none" ? "🔁 " : ""}${esc(t.title)}</div>
             <div class="desc">${esc(t.desc).slice(0,90)}${(t.desc||"").length>90?"…":""}</div>
           </div>
           <div class="foot">${avatarHtml(e,"sm")} <span>${esc(e.name.split(" ")[0])}</span>
@@ -1157,6 +1241,43 @@ function pgTasks(){
     Xodim vazifani tugatganda u avtomatik <b>«Tasdiq kutilmoqda»</b> bosqichiga o'tadi — «Bajarildi»ga faqat bo'lim boshlig'i tasdig'idan keyin o'tkaziladi.</p>`;
   return `<div class="filters">${addBtn}</div>${note}<div class="kanban">${cols}</div>`;
 }
+/* Vazifa izohlari (demo: xotirada; cloud: task_comments jadvali) */
+let COMMENTS = [
+  { id: 1, task: 2, author: 3, text: "Log fayllarini ham tekshirib ko'ring", at: "2026-07-21 14:20" },
+  { id: 2, task: 2, author: 5, text: "Xato topildi, tuzatib tasdiqqa yubordim", at: "2026-07-22 10:05" },
+];
+async function loadComments(taskId){
+  const el = document.getElementById("cmList"); if (!el) return;
+  let list;
+  if (CLOUD) {
+    const { data, error } = await sb.from("task_comments").select("*").eq("task", taskId).order("created_at");
+    if (error) { el.innerHTML = `<div class="empty" style="padding:10px">Izohlar yuklanmadi</div>`; return; }
+    list = data.map(c => ({ author: c.author, text: c.text, at: (c.created_at||"").slice(0,16).replace("T"," ") }));
+  } else list = COMMENTS.filter(c => String(c.task) === String(taskId));
+  el.innerHTML = list.length ? list.map(c => {
+    const a = empById(c.author);
+    return `<div style="display:flex;gap:8px;margin-top:9px;align-items:flex-start">
+      ${a ? avatarHtml(a,"sm") : ""}
+      <div style="background:var(--surface2);border-radius:10px;padding:7px 11px;flex:1">
+        <b style="font-size:12px">${a ? esc(a.name.split(" ")[0]) : "—"}</b>
+        <span style="font-size:10.5px;color:var(--muted)"> · ${c.at || ""}</span>
+        <div style="font-size:12.5px;margin-top:2px;white-space:pre-wrap">${esc(c.text)}</div></div></div>`;
+  }).join("") : `<div style="font-size:12px;color:var(--muted);padding:6px 0">Hali izoh yo'q</div>`;
+}
+async function addComment(taskId){
+  const inp = document.getElementById("cmInput");
+  const text = inp.value.trim(); if (!text) return;
+  const now = new Date();
+  if (CLOUD) {
+    const { error } = await sb.from("task_comments").insert({ task: taskId, author: USER.id, text });
+    if (error) return toast("Xatolik: " + error.message);
+  } else {
+    COMMENTS.push({ id: Date.now(), task: taskId, author: USER.id, text,
+      at: TODAY + " " + String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0") });
+  }
+  inp.value = ""; loadComments(taskId); renderBell();
+}
+
 /* Vazifa batafsil oynasi */
 function openTaskView(id){
   const t = TASKS.find(x => String(x.id) === String(id));
@@ -1178,10 +1299,18 @@ function openTaskView(id){
       <div><b class="num ${late?"":""}" style="${late?"color:var(--danger)":""}">Muddat: ${uzDate(t.due)}</b>
         ${t.doneAt ? `<span style="color:var(--muted)"> · bajarildi: ${uzDate(t.doneAt)}</span>` : ""}</div>
     </div>
+    <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:11px">
+      <b style="font-size:13px">💬 Izohlar</b>
+      <div id="cmList"><div style="font-size:12px;color:var(--muted);padding:6px 0">Yuklanmoqda...</div></div>
+      <div style="display:flex;gap:7px;margin-top:10px">
+        <input id="cmInput" placeholder="Izoh yozing..." onkeydown="if(event.key==='Enter')addComment('${t.id}')">
+        <button class="btn primary sm" onclick="addComment('${t.id}')">Yuborish</button></div>
+    </div>
     <div class="foot" style="justify-content:space-between">
-      <div style="display:flex;gap:7px">${taskActions(t).replace('class="actions"','style="display:flex;gap:7px"')}</div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap">${taskActions(t).replace('class="actions"','style="display:flex;gap:7px;flex-wrap:wrap"')}</div>
       <button class="btn ghost" onclick="closeModal()">Yopish</button>
     </div>`);
+  loadComments(t.id);
 }
 async function moveTask(id, status, returned=false){
   closeModal();
@@ -1196,6 +1325,13 @@ async function moveTask(id, status, returned=false){
   else toast("Vazifa jarayonga o'tdi");
   render();
 }
+function nextDue(due, rep){
+  const d = new Date(due + "T00:00:00");
+  if (rep === "daily") d.setDate(d.getDate() + 1);
+  else if (rep === "weekly") d.setDate(d.getDate() + 7);
+  else if (rep === "monthly") d.setMonth(d.getMonth() + 1);
+  return d.toISOString().slice(0,10);
+}
 async function approveTask(id){
   closeModal();
   const t = TASKS.find(x => String(x.id) === String(id));
@@ -1204,7 +1340,19 @@ async function approveTask(id){
     if (error) return toast("Xatolik: " + error.message);
   }
   t.status = "done"; t.doneAt = TODAY;
-  toast("Vazifa tasdiqlandi — Bajarildi ✓");
+  // Takrorlanuvchi vazifa: keyingi nusxasi avtomatik ochiladi
+  if (t.rep && t.rep !== "none") {
+    const due2 = nextDue(t.due, t.rep);
+    if (CLOUD) {
+      const { data } = await sb.from("tasks")
+        .insert({ title: t.title, descr: t.desc, emp: t.emp, created_by: t.by, due: due2, status: "new", repeat: t.rep })
+        .select().single();
+      if (data) TASKS.push({ id: data.id, title: t.title, desc: t.desc, emp: t.emp, by: t.by, due: due2, status: "new", rep: t.rep });
+    } else {
+      TASKS.push({ id: Date.now(), title: t.title, desc: t.desc, emp: t.emp, by: t.by, due: due2, status: "new", rep: t.rep });
+    }
+    toast(`Tasdiqlandi ✓ Takroriy vazifa ${uzDate(due2)} muddat bilan qayta ochildi 🔁`);
+  } else toast("Vazifa tasdiqlandi — Bajarildi ✓");
   render();
 }
 
@@ -1220,6 +1368,7 @@ function pgAttendance(){
           : `Hali belgilanmagan — hozircha istalgan joydan belgilash mumkin`}</span></div>
       <select id="gfRadius" style="width:110px">${[50,80,100,150].map(r=>`<option value="${r}" ${(OFFICE?.radius||100)===r?"selected":""}>${r} m</option>`).join("")}</select>
       <button class="btn primary sm" onclick="setOffice()">Shu yerni ishxona deb belgilash</button>
+      <button class="btn ghost sm" onclick="openFieldModal()">🚶 Tashqarida ishlash ruxsati</button>
     </div>` : "";
   const rows = ATTENDANCE
     .filter(a => scope.some(e => e.id === a.emp))
@@ -1229,8 +1378,14 @@ function pgAttendance(){
       const e = empById(a.emp);
       return `<tr class="rowhover"><td><div style="display:flex;align-items:center;gap:9px">${avatarHtml(e,"sm")} ${esc(e.name)}</div></td>
         <td>${uzDate(a.date)}</td>
-        <td class="num">${a.in} ${a.geo?`<a href="https://maps.google.com/?q=${a.geo}" target="_blank" rel="noopener" title="Xaritada ochish" style="text-decoration:none">📍</a>`:""} ${a.late?'<span class="tag danger">kechikdi</span>':'<span class="tag success">vaqtida</span>'}</td>
-        <td class="num">${a.out ?? "<span class='tag gold'>ishda</span>"} ${a.auto?'<span class="tag gold" title="Ketdim bosilmagani uchun 18:00 bilan avtomatik yopilgan">avto</span>':""}</td>
+        <td class="num">${a.in} ${a.geo?`<a href="https://maps.google.com/?q=${a.geo}" target="_blank" rel="noopener" title="Xaritada ochish" style="text-decoration:none">📍</a>`:""} ${a.late?'<span class="tag danger">kechikdi</span>':'<span class="tag success">vaqtida</span>'} ${isFieldDay(a.emp,a.date)?'<span class="tag info" title="Admin ruxsati bilan tashqarida ishlagan">tashqarida</span>':""}</td>
+        <td class="num">${a.out ?? "<span class='tag gold'>ishda</span>"} ${a.auto?'<span class="tag gold" title="Ketdim bosilmagani uchun 18:00 bilan avtomatik yopilgan">avto</span>':""}
+          ${a.lunchLate?'<span class="tag danger" title="Obeddan 14:00 dan kech qaytgan">obed kech</span>':""}
+          ${otMinutes(a)>0 ? (a.ot==="pending" && canApproveOT(a)
+            ? `<span class="tag gold">+${otMinutes(a)} daq</span>
+               <button class="btn success sm" onclick="decideOT('${a.emp}','${a.date}','approved')">✓</button>
+               <button class="btn ghost sm" onclick="decideOT('${a.emp}','${a.date}','rejected')">✗</button>`
+            : `<span class="tag ${ {pending:"gold",approved:"success",rejected:"danger",none:"muted"}[a.ot||"none"] }" title="Qo'shimcha vaqt">+${otMinutes(a)} daq ${ {pending:"kutmoqda",approved:"✓",rejected:"rad",none:""}[a.ot||"none"] }</span>`) : ""}</td>
         <td class="num">${a.out ? workedHours(a).toFixed(1)+" soat" : "—"}</td>
         ${isAdmin?`<td><button class="btn ghost sm" onclick="openAttModal('${a.emp}','${a.date}')">✎</button></td>`:""}</tr>`;
     }).join("");
@@ -1293,6 +1448,51 @@ async function addDept(){
   toast("Bo'lim qo'shildi"); render(); openDeptModal();
 }
 
+/* Admin: kunlik tashqarida ishlash ruxsatlari */
+function openFieldModal(){
+  const upcoming = FIELD_DAYS.filter(f => f.date >= TODAY).sort((a,b)=>a.date.localeCompare(b.date));
+  openModal(`
+    <h3>🚶 Tashqarida ishlash ruxsati</h3>
+    <div class="sub">Belgilangan kunda xodimga geofence talab qilinmaydi — ish yuzasidan ko'chada bo'lsa</div>
+    <label>Xodim</label><select id="fdEmp">${scopeEmployees().map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join("")}</select>
+    <label>Sana</label><input id="fdDate" type="date" value="${TODAY}" min="${TODAY}">
+    <label>Izoh (ixtiyoriy)</label><input id="fdNote" placeholder="masalan, mijoz obyektida">
+    <button class="btn primary sm" style="margin-top:12px" onclick="addFieldDay()">Ruxsat berish</button>
+    <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:12px">
+      <b style="font-size:13px">Amaldagi ruxsatlar</b>
+      ${upcoming.length ? upcoming.map(f => { const e = empById(f.emp); return `
+        <div style="display:flex;align-items:center;gap:9px;margin-top:9px;font-size:12.5px">
+          ${e?avatarHtml(e,"sm"):""}<div style="flex:1"><b>${e?esc(e.name):"—"}</b> · ${uzDate(f.date)}${f.note?` · <span style="color:var(--muted)">${esc(f.note)}</span>`:""}</div>
+          <button class="btn sm" style="color:var(--danger)" onclick="delFieldDay('${f.emp}','${f.date}')">✕</button></div>`; }).join("")
+      : `<div style="font-size:12px;color:var(--muted);margin-top:8px">Hozircha ruxsat yo'q</div>`}
+    </div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
+}
+async function addFieldDay(){
+  const emp = $("#fdEmp").value, date = $("#fdDate").value, note = $("#fdNote").value.trim() || null;
+  if (!date) return toast("Sanani tanlang");
+  if (isFieldDay(emp, date)) return toast("Bu kunga allaqachon ruxsat berilgan");
+  const eo = empById(emp);
+  if (CLOUD) {
+    const { data, error } = await sb.from("field_days")
+      .insert({ emp, date, note, created_by: USER.id }).select().single();
+    if (error) return toast("Xatolik: " + error.message);
+    FIELD_DAYS.push({ id: data.id, emp: data.emp, date, note });
+  } else FIELD_DAYS.push({ id: Date.now(), emp: eo.id, date, note });
+  toast(eo.name.split(" ")[0] + "ga " + uzDate(date) + " kuni tashqarida ishlashga ruxsat berildi");
+  render(); openFieldModal();
+}
+async function delFieldDay(emp, date){
+  const f = FIELD_DAYS.find(x => String(x.emp) === String(emp) && x.date === date);
+  if (!f) return;
+  if (CLOUD) {
+    const { error } = await sb.from("field_days").delete().eq("id", f.id);
+    if (error) return toast("Xatolik: " + error.message);
+  }
+  FIELD_DAYS = FIELD_DAYS.filter(x => x !== f);
+  toast("Ruxsat bekor qilindi"); render(); openFieldModal();
+}
+
 function openAttModal(emp, date){
   const fixed = !!(emp && date);
   const a = fixed ? ATTENDANCE.find(x => String(x.emp)===String(emp) && x.date===date) : null;
@@ -1326,6 +1526,9 @@ async function saveAtt(emp, date){
     }
   } else if (!a) { a = { emp: eo.id, date }; ATTENDANCE.push(a); }
   a.in = tin; a.out = tout; a.late = late; a.auto = false;
+  // Admin qo'lda kiritdi — demak vaqt kelishilgan: qo'shimcha vaqt bo'lsa avtomatik tasdiqlanadi
+  a.ot = (tout && otMinutes(a) > 0) ? "approved" : "none";
+  if (CLOUD && a.id) await sb.from("attendance").update({ ot_status: a.ot }).eq("id", a.id);
   closeModal(); toast("Davomat saqlandi (admin tuzatdi)"); render();
 }
 // Joylashuvni olish (ruxsat so'raladi; 6 soniyada javob bo'lmasa — joylashuvsiz davom etadi)
@@ -1342,7 +1545,7 @@ function getGeo(){
 async function geoGuard(){
   const g = await getGeo();
   if (!g) { toast("Joylashuv aniqlanmadi — brauzerda joylashuvga ruxsat berib, qayta urinib ko'ring"); return null; }
-  if (OFFICE) {
+  if (OFFICE && !USER.fieldWork && !isFieldDay(USER.id, TODAY)) {
     const d = Math.round(distMeters(g.lat, g.lng, OFFICE.lat, OFFICE.lng));
     const allow = OFFICE.radius + Math.min(Math.round(g.acc || 0), 30); // GPS xatosiga kichik chegirma
     if (d > allow) { toast(`Siz ishxonada emassiz — masofa ~${d} m (ruxsat ${OFFICE.radius} m)`); return null; }
@@ -1387,12 +1590,54 @@ async function checkOut(){
   const t = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
   toast("Joylashuv aniqlanmoqda...");
   if (!(await geoGuard())) return;
+  const otAfter = Math.max(0, minutes(WORK_START) - minutes(a.in)) + Math.max(0, minutes(t) - minutes("18:00"));
+  const otStatus = otAfter > 0 ? "pending" : "none";
   if (CLOUD) {
-    const { error } = await sb.from("attendance").update({ check_out: t }).eq("id", a.id);
+    const { error } = await sb.from("attendance").update({ check_out: t, ot_status: otStatus }).eq("id", a.id);
     if (error) return toast("Xatolik: " + error.message);
   }
-  a.out = t;
-  toast("Ketish vaqti qayd etildi: " + t); render(); startClock();
+  a.out = t; a.ot = otStatus;
+  toast(otAfter > 0
+    ? `Ketish qayd etildi: ${t}. Qo'shimcha ${otAfter} daqiqa boshliq tasdig'iga yuborildi`
+    : "Ketish vaqti qayd etildi: " + t);
+  render(); startClock();
+}
+
+/* Obeddan qaytish (14:00 gacha bosilishi kerak) */
+async function checkLunch(){
+  const a = ATTENDANCE.find(x => x.emp === USER.id && x.date === TODAY);
+  if (!a || a.out) return;
+  toast("Joylashuv aniqlanmoqda...");
+  if (!(await geoGuard())) return;
+  const now = new Date();
+  const t = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+  const late = minutes(t) > minutes(LUNCH_END);
+  if (CLOUD) {
+    const { error } = await sb.from("attendance").update({ lunch_back: t, lunch_late: late }).eq("id", a.id);
+    if (error) return toast("Xatolik: " + error.message);
+  }
+  a.lunchBack = t; a.lunchLate = late;
+  toast(late ? `Obeddan kech qaytdingiz (${t}) — kechikish sifatida hisobga olindi`
+             : "Obeddan qaytish qayd etildi: " + t);
+  render();
+}
+
+/* Qo'shimcha vaqtni tasdiqlash/rad etish (boshliq, rahbar, admin) */
+function canApproveOT(a){
+  if (String(a.emp) === String(USER.id)) return false;
+  if (USER.role === "admin" || USER.role === "rahbar") return true;
+  return USER.role === "boshliq" && String(empById(a.emp)?.dept) === String(USER.dept);
+}
+async function decideOT(emp, date, status){
+  const a = ATTENDANCE.find(x => String(x.emp) === String(emp) && x.date === date);
+  if (!a) return;
+  if (CLOUD) {
+    const { error } = await sb.from("attendance").update({ ot_status: status }).eq("id", a.id);
+    if (error) return toast("Xatolik: " + error.message);
+  }
+  a.ot = status;
+  toast(status === "approved" ? "Qo'shimcha vaqt tasdiqlandi — hisobga qo'shildi" : "Qo'shimcha vaqt rad etildi");
+  render();
 }
 
 /* ---------- 6. JARIMA / BONUS ---------- */
@@ -1464,7 +1709,12 @@ function openTaskModal(){
     <label>Xodim</label><select id="tEmp">${assignable.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join("")}</select>
     <label>Sarlavha</label><input id="tTitle" placeholder="Vazifa nomi">
     <label>Tavsif</label><textarea id="tDesc" rows="2" placeholder="Qisqacha tushuntirish"></textarea>
-    <label>Muddat</label><input id="tDue" type="date" value="2026-07-30">
+    <label>Takrorlanishi</label><select id="tRep">
+      <option value="none">Bir martalik</option>
+      <option value="daily">🔁 Har kuni</option>
+      <option value="weekly">🔁 Har hafta</option>
+      <option value="monthly">🔁 Har oy</option></select>
+    <label>Muddat</label><input id="tDue" type="date" value="${TODAY}">
     <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor qilish</button>
     <button class="btn primary" onclick="saveTask()">Berish</button></div>`);
 }
@@ -1473,14 +1723,15 @@ async function saveTask(){
   if (!title) return toast("Sarlavhani kiriting");
   const desc = $("#tDesc").value.trim(), due = $("#tDue").value;
   const empVal = CLOUD ? $("#tEmp").value : +$("#tEmp").value;
+  const trep = $("#tRep") ? $("#tRep").value : "none";
   if (CLOUD) {
     const { data, error } = await sb.from("tasks")
-      .insert({ title, descr: desc, emp: empVal, created_by: USER.id, due, status: "new" })
+      .insert({ title, descr: desc, emp: empVal, created_by: USER.id, due, status: "new", repeat: trep })
       .select().single();
     if (error) return toast("Xatolik: " + error.message);
-    TASKS.push({ id: data.id, title, desc, emp: data.emp, by: USER.id, due, status: "new" });
+    TASKS.push({ id: data.id, title, desc, emp: data.emp, by: USER.id, due, status: "new", rep: trep });
   } else {
-    TASKS.push({ id: Date.now(), title, desc, emp: empVal, by: USER.id, due, status: "new" });
+    TASKS.push({ id: Date.now(), title, desc, emp: empVal, by: USER.id, due, status: "new", rep: trep });
   }
   closeModal(); toast("Vazifa berildi"); go("tasks");
 }
@@ -1502,6 +1753,9 @@ function openEmpModal(id){
     <input id="eSalary" type="number" value="${e?e.salary:5000000}" step="500000">
     <label>Shartnoma muddati (qachongacha)</label>
     <input id="eContract" type="date" value="${e?.contract||""}">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:14px">
+      <input type="checkbox" id="eField" style="width:auto" ${e?.fieldWork?"checked":""}>
+      DOIMIY ko'chada ishlaydi — geofence hech qachon so'ralmasin (bir kunlik ruxsat Davomat sahifasida beriladi)</label>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div><label>Login (qisqa, masalan: jasur)</label><input id="eLogin" value="${e?esc(e.login||""):""}" placeholder="jasur" ${CLOUD&&e?"disabled":""}></div>
       <div><label>Parol</label><input id="ePass" type="${CLOUD?"password":"text"}" value="${!CLOUD&&e?esc(e.pass||""):""}" placeholder="parol" ${CLOUD&&e?"disabled":""}></div>
@@ -1523,14 +1777,15 @@ async function saveEmp(id){
   const palette = ["#149E93","#4C82E0","#C98F2B","#7B5BA6","#2E7D6B","#B5762A","#1B8FA6","#5B7BD8"];
   const color = palette[Math.floor(Math.random()*palette.length)];
   const contract = $("#eContract").value || null;
+  const fieldWork = !!$("#eField").checked;
   const fields = { name, pos: $("#ePos").value.trim() || "Xodim",
                    dept: role === "rahbar" ? null : $("#eDept").value,
                    role, salary: +$("#eSalary").value || 0 };
   if (CLOUD) {
     if (id) { // tahrirlash — profil yangilanadi (login/parol Dashboard orqali)
-      const { error } = await sb.from("profiles").update({ ...fields, contract_until: contract }).eq("id", id);
+      const { error } = await sb.from("profiles").update({ ...fields, contract_until: contract, field_work: fieldWork }).eq("id", id);
       if (error) return toast("Xatolik: " + error.message);
-      Object.assign(empById(id), fields, { contract });
+      Object.assign(empById(id), fields, { contract, fieldWork });
     } else {  // yangi hisob — alohida klient orqali (admin sessiyasi saqlanadi)
       const { data, error } = await sbSignup.auth.signUp({
         email: toEmail(login), password: pass,
@@ -1538,12 +1793,12 @@ async function saveEmp(id){
       });
       if (error) return toast("Xatolik: " + error.message);
       if (!data.user) return toast("Hisob yaratilmadi — Supabase sozlamalarini tekshiring");
-      if (contract) await sb.from("profiles").update({ contract_until: contract }).eq("id", data.user.id);
-      EMPLOYEES.push({ id: data.user.id, color, login, contract, ...fields });
+      if (contract || fieldWork) await sb.from("profiles").update({ contract_until: contract, field_work: fieldWork }).eq("id", data.user.id);
+      EMPLOYEES.push({ id: data.user.id, color, login, contract, fieldWork, ...fields });
     }
   } else {
-    if (id) Object.assign(empById(id), { ...fields, contract, login, pass });
-    else EMPLOYEES.push({ id: Date.now(), color, login, pass, contract, ...fields });
+    if (id) Object.assign(empById(id), { ...fields, contract, fieldWork, login, pass });
+    else EMPLOYEES.push({ id: Date.now(), color, login, pass, contract, fieldWork, ...fields });
   }
   closeModal(); toast(id ? "Ma'lumotlar yangilandi" : "Xodim qo'shildi va hisob ochildi"); render();
 }
@@ -1569,26 +1824,31 @@ async function confirmRemove(id){
 /* Supabase'dan barcha ruxsat etilgan ma'lumotlarni yuklash (RLS avtomatik filtrlaydi) */
 async function loadAll(){
   const monthStart = TODAY.slice(0,8) + "01";
-  const [pr, tk, fb, at, st, dp] = await Promise.all([
+  const [pr, tk, fb, at, st, dp, fd] = await Promise.all([
     sb.from("profiles").select("*").eq("active", true),
     sb.from("tasks").select("*").order("created_at"),
     sb.from("fine_bonus").select("*").order("date"),
     sb.from("attendance").select("*").gte("date", monthStart).order("date"),
     sb.from("settings").select("*").eq("id", 1).maybeSingle(),
     sb.from("departments").select("*").order("name"),
+    sb.from("field_days").select("*").gte("date", monthStart),
   ]);
   if (dp.data && dp.data.length) DEPTS = dp.data.map(d => ({ id: d.id, name: d.name, color: d.color }));
   OFFICE = (st.data && st.data.office_lat != null)
     ? { lat: st.data.office_lat, lng: st.data.office_lng, radius: st.data.radius_m || 100 } : null;
+  FIELD_DAYS = (fd.data || []).map(f => ({ id: f.id, emp: f.emp, date: f.date, note: f.note }));
   EMPLOYEES = (pr.data || []).map(p => ({ id: p.id, name: p.name, role: p.role, dept: p.dept,
-    pos: p.pos, salary: +p.salary, color: p.color, login: toShort(p.email), contract: p.contract_until }));
+    pos: p.pos, salary: +p.salary, color: p.color, login: toShort(p.email),
+    contract: p.contract_until, fieldWork: !!p.field_work }));
   TASKS = (tk.data || []).map(t => ({ id: t.id, title: t.title, desc: t.descr, emp: t.emp,
-    by: t.created_by, due: t.due, status: t.status, doneAt: t.done_at }));
+    by: t.created_by, due: t.due, status: t.status, doneAt: t.done_at, rep: t.repeat || "none" }));
   FINEBONUS = (fb.data || []).map(f => ({ id: f.id, emp: f.emp, type: f.type,
     amount: +f.amount, reason: f.reason, date: f.date }));
   ATTENDANCE = (at.data || []).map(a => ({ id: a.id, emp: a.emp, date: a.date,
     in: (a.check_in || "").slice(0,5), out: a.check_out ? a.check_out.slice(0,5) : null,
-    late: a.late, geo: (a.lat != null && a.lng != null) ? a.lat.toFixed(5) + "," + a.lng.toFixed(5) : null }));
+    late: a.late, ot: a.ot_status || "none",
+    lunchBack: a.lunch_back ? a.lunch_back.slice(0,5) : null, lunchLate: !!a.lunch_late,
+    geo: (a.lat != null && a.lng != null) ? a.lat.toFixed(5) + "," + a.lng.toFixed(5) : null }));
   normalizeAttendance();
 }
 
