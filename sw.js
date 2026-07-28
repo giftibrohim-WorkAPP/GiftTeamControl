@@ -1,4 +1,4 @@
-const CACHE = "gm-pulse-v9";
+const CACHE = "gm-pulse-v10";
 const ASSETS = [
   "./",
   "./index.html",
