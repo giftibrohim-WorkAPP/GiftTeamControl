@@ -209,6 +209,41 @@ tr.rowhover:hover td{background:var(--surface2)}
 .notif-item{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;padding:10px 11px;
   border-radius:10px;font-size:12.5px;font-weight:600;line-height:1.4}
 .notif-item:hover{background:var(--surface2)}
+.btn.rec{background:var(--danger);color:#fff;border-color:var(--danger);animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.65}}
+.day-chip{display:inline-flex;margin:0}
+.day-chip input{display:none}
+.day-chip span{padding:7px 13px;border:1px solid var(--line);border-radius:99px;font-size:12.5px;font-weight:700;cursor:pointer;background:var(--surface2)}
+.day-chip input:checked+span{background:var(--accent);color:#fff;border-color:var(--accent)}
+/* Davomat akkordeoni */
+.acc summary{display:flex;align-items:center;gap:9px;cursor:pointer;list-style:none;padding:13px 16px;font-size:14px}
+.acc summary::-webkit-details-marker{display:none}
+.acc summary::before{content:"›";font-weight:800;color:var(--muted);transition:transform .15s}
+.acc[open]>summary::before{transform:rotate(90deg)}
+.day-acc{margin-bottom:11px;padding:0}
+.dept-acc{border-top:1px solid var(--line)}
+.dept-acc summary{padding:11px 16px;font-size:13px}
+.acc-body{padding:4px 12px 12px}
+.sub2{font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.03em}
+.att-row{display:flex;align-items:center;gap:12px;padding:10px 6px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.att-row:last-child{border-bottom:none}
+.att-who{display:flex;align-items:center;gap:9px;min-width:170px;flex:1}
+.att-who b{font-size:13.5px}
+.att-cells{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+.att-cells>div{display:flex;flex-direction:column;gap:2px}
+.att-cells b{font-size:13.5px}
+@media(max-width:700px){
+  .att-row{flex-direction:column;align-items:stretch;gap:8px;background:var(--surface2);border-radius:12px;padding:11px 12px;margin-bottom:8px;border-bottom:none}
+  .att-who{min-width:0}
+  .att-cells{gap:10px;justify-content:space-between}
+  .att-cells>div{flex:1;min-width:90px}
+  .att-row>.btn{align-self:flex-end}
+  .acc summary{padding:12px 12px;flex-wrap:wrap}
+  .acc-body{padding:4px 8px 10px}
+  .kpi-table{display:none}
+  .kpi-cards{display:grid;gap:10px}
+}
+.kpi-cards{display:none}
 @media(max-width:820px){.notif-panel{position:fixed;right:12px;left:12px;top:auto;width:auto;margin-top:6px}}
 .filters select,.filters input{width:auto;min-width:150px}
 .empty{padding:34px;text-align:center;color:var(--muted);font-size:13.5px}
@@ -1070,7 +1105,17 @@ function pgDashboard(){
   // Xodimlar kesimida KPI raqamlari (nimadan hisoblanayotgani ko'rinadi)
   const kpiTable = `
     <h3 class="section-title">Samaradorlik tafsiloti <span>KPI = 60% vazifa + 20% muddatida + 20% vaqtida kelish</span></h3>
-    <div class="card t-wrap"><table>
+    <div class="kpi-cards">${[...scope].sort((a,b)=>efficiency(b.id)-efficiency(a.id)).map(e => { const dd = effDetail(e.id); return `
+      <div class="card pay-card" onclick="viewEmp('${e.id}')" style="cursor:pointer">
+        <div class="top">${avatarHtml(e,"sm")}<div><b>${esc(e.name)}</b><span>${esc(e.pos)}</span></div>
+          <div class="net num">${dd.kpi}%<br><span style="font-size:10px;color:var(--muted);font-weight:600">KPI</span></div></div>
+        <div class="rows">
+          <div><b class="num">${dd.tDone}/${dd.tTotal}</b><span>VAZIFA</span></div>
+          <div><b class="num">${dd.tDone?dd.onTime+"/"+dd.tDone:"—"}</b><span>MUDDATIDA</span></div>
+          <div><b class="num">${dd.punct}/${dd.days}</b><span>VAQTIDA KELISH</span></div>
+          <div><b class="num" style="color:${dd.days-dd.punct>0?"var(--danger)":"var(--success)"}">${dd.days-dd.punct}</b><span>KECHIKISH</span></div>
+        </div></div>`; }).join("")}</div>
+    <div class="card t-wrap kpi-table"><table>
       <tr><th>Xodim</th><th>Vazifalar</th><th>Muddatida</th><th>Vaqtida kelish</th><th>KPI</th></tr>
       ${[...scope].sort((a,b)=>efficiency(b.id)-efficiency(a.id)).map(e => { const d = effDetail(e.id); return `
       <tr class="rowhover" style="cursor:pointer" onclick="viewEmp('${e.id}')">
@@ -1230,7 +1275,7 @@ function pgTasks(){
         const late = t.status !== "done" && t.due < TODAY;
         return `<div class="task-card">
           <div style="cursor:pointer" onclick="openTaskView('${t.id}')" title="Batafsil ochish">
-            <div class="ttl">${t.rep && t.rep!=="none" ? "🔁 " : ""}${esc(t.title)}</div>
+            <div class="ttl">${t.rep && t.rep!=="none" ? `<span title="Takrorlanadi: ${repLabel(t.rep)}">🔁</span> ` : ""}${esc(t.title)} ${(t.voice||t.voiceUrl)?"🎙":""}</div>
             <div class="desc">${esc(t.desc).slice(0,90)}${(t.desc||"").length>90?"…":""}</div>
           </div>
           <div class="foot">${avatarHtml(e,"sm")} <span>${esc(e.name.split(" ")[0])}</span>
@@ -1244,6 +1289,54 @@ function pgTasks(){
     Xodim vazifani tugatganda u avtomatik <b>«Tasdiq kutilmoqda»</b> bosqichiga o'tadi — «Bajarildi»ga faqat bo'lim boshlig'i tasdig'idan keyin o'tkaziladi.</p>`;
   return `<div class="filters">${addBtn}</div>${note}<div class="kanban">${cols}</div>`;
 }
+/* ===== Ovozli kiritish ===== */
+let recog = null, mediaRec = null, recChunks = [], voiceBlob = null;
+function toggleDictate(targetId, btn){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return toast("Bu brauzerda ovozdan matn ishlamaydi — Chrome tavsiya etiladi");
+  if (recog) { recog.stop(); return; }
+  recog = new SR();
+  recog.lang = "uz-UZ"; recog.continuous = true; recog.interimResults = false;
+  btn.classList.add("rec"); btn.textContent = "⏹ To'xtatish";
+  recog.onresult = ev => {
+    let t = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++)
+      if (ev.results[i].isFinal) t += ev.results[i][0].transcript + " ";
+    if (t) { const el = $("#" + targetId); el.value = (el.value + " " + t).trim(); }
+  };
+  recog.onerror = e => { if (e.error !== "no-speech") toast("Ovoz xatosi: " + e.error); };
+  recog.onend = () => { recog = null; btn.classList.remove("rec"); btn.textContent = "🎤 Ovozdan matn"; };
+  recog.start(); toast("Gapiring — tugatgach tugmani qayta bosing");
+}
+async function toggleVoiceNote(btn){
+  if (mediaRec && mediaRec.state === "recording") { mediaRec.stop(); return; }
+  if (!navigator.mediaDevices?.getUserMedia) return toast("Bu brauzerda mikrofon ishlamaydi");
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRec = new MediaRecorder(stream); recChunks = [];
+    mediaRec.ondataavailable = e => recChunks.push(e.data);
+    mediaRec.onstop = () => {
+      voiceBlob = new Blob(recChunks, { type: mediaRec.mimeType || "audio/webm" });
+      stream.getTracks().forEach(t => t.stop());
+      const p = document.getElementById("vnPrev");
+      if (p) { p.style.display = "block"; p.src = URL.createObjectURL(voiceBlob); }
+      btn.classList.remove("rec"); btn.textContent = "🎙 Qayta yozish";
+      toast("Ovozli izoh tayyor — vazifa bilan birga saqlanadi");
+    };
+    mediaRec.start();
+    btn.classList.add("rec"); btn.textContent = "⏹ Yozishni to'xtatish";
+    toast("Yozilmoqda... tugatgach tugmani bosing");
+  } catch(e) { toast("Mikrofonga ruxsat berilmadi"); }
+}
+async function loadVoice(t){
+  const el = document.getElementById("vnPlay"); if (!el) return;
+  if (t.voiceUrl) { el.src = t.voiceUrl; return; }
+  if (CLOUD && t.voice) {
+    const { data } = await sb.storage.from("voice").createSignedUrl(t.voice, 600);
+    if (data) el.src = data.signedUrl;
+  }
+}
+
 /* Vazifa izohlari (demo: xotirada; cloud: task_comments jadvali) */
 let COMMENTS = [
   { id: 1, task: 2, author: 3, text: "Log fayllarini ham tekshirib ko'ring", at: "2026-07-21 14:20" },
@@ -1294,6 +1387,8 @@ function openTaskView(id){
     <div style="margin:8px 0 4px"><span class="tag ${stCls[t.status]}">${stLbl[t.status]}</span>
       ${late ? '<span class="tag danger">⚠ muddati o\'tgan</span>' : ""}</div>
     <p style="font-size:13.5px;margin:12px 0;white-space:pre-wrap">${esc(t.desc) || "<i style='color:var(--muted)'>Tavsif yozilmagan</i>"}</p>
+    ${(t.voice || t.voiceUrl) ? `<div style="margin:8px 0"><b style="font-size:12.5px">🎙 Ovozli izoh:</b>
+      <audio id="vnPlay" controls style="width:100%;margin-top:5px"></audio></div>` : ""}
     <div style="display:grid;gap:9px;font-size:13px;background:var(--surface2);border-radius:12px;padding:13px 14px">
       <div style="display:flex;align-items:center;gap:9px">${avatarHtml(e,"sm")}
         <div><b>${esc(e.name)}</b><br><span style="color:var(--muted);font-size:11.5px">bajaruvchi · ${esc(e.pos)}</span></div></div>
@@ -1313,7 +1408,8 @@ function openTaskView(id){
       <div style="display:flex;gap:7px;flex-wrap:wrap">${taskActions(t).replace('class="actions"','style="display:flex;gap:7px;flex-wrap:wrap"')}</div>
       <button class="btn ghost" onclick="closeModal()">Yopish</button>
     </div>`);
-  loadComments(t.id);
+  window.__taskOpen = t.id;
+  loadComments(t.id); loadVoice(t);
 }
 async function moveTask(id, status, returned=false){
   closeModal();
@@ -1328,11 +1424,29 @@ async function moveTask(id, status, returned=false){
   else toast("Vazifa jarayonga o'tdi");
   render();
 }
+const WD_SHORT = ["Yak","Du","Se","Chor","Pay","Ju","Sha"];
+function repLabel(r){
+  if (!r || r === "none") return "";
+  if (r === "daily") return "har kuni";
+  if (r === "alt") return "kun ora";
+  if (r === "weekly") return "har hafta";
+  if (r === "monthly") return "har oy";
+  if (r.startsWith("days:")) return r.slice(5).split(",").map(n => WD_SHORT[+n] || "").join(", ");
+  return r;
+}
+/* Keyingi muddat. Yakshanba — dam kuni: hech bir takror unga tushmaydi */
 function nextDue(due, rep){
   const d = new Date(due + "T00:00:00");
-  if (rep === "daily") d.setDate(d.getDate() + 1);
-  else if (rep === "weekly") d.setDate(d.getDate() + 7);
-  else if (rep === "monthly") d.setMonth(d.getMonth() + 1);
+  const skipSun = () => { while (d.getDay() === 0) d.setDate(d.getDate() + 1); };
+  if (rep === "daily") { d.setDate(d.getDate() + 1); skipSun(); }
+  else if (rep === "alt") { d.setDate(d.getDate() + 2); skipSun(); }
+  else if (rep === "weekly") { d.setDate(d.getDate() + 7); skipSun(); }
+  else if (rep === "monthly") { d.setMonth(d.getMonth() + 1); skipSun(); }
+  else if (rep.startsWith("days:")) {
+    const days = rep.slice(5).split(",").map(Number).filter(x => x >= 1 && x <= 6).sort();
+    if (days.length) do { d.setDate(d.getDate() + 1); } while (!days.includes(d.getDay()));
+    else { d.setDate(d.getDate() + 7); skipSun(); }
+  }
   return d.toISOString().slice(0,10);
 }
 async function approveTask(id){
@@ -1363,6 +1477,7 @@ async function approveTask(id){
 function pgAttendance(){
   const scope = scopeEmployees();
   const isAdmin = USER.role === "admin";
+  const grouped = USER.role === "admin" || USER.role === "rahbar"; // bo'limlar kesimida
   const officeCard = isAdmin ? `
     <div class="card" style="padding:14px 16px;margin-bottom:15px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
       <div style="flex:1;min-width:210px"><b style="font-size:13.5px">📍 Ishxona joylashuvi (geofence)</b><br>
@@ -1373,83 +1488,81 @@ function pgAttendance(){
       <button class="btn primary sm" onclick="setOffice()">Shu yerni ishxona deb belgilash</button>
       <button class="btn ghost sm" onclick="openFieldModal()">🚶 Tashqarida ishlash ruxsati</button>
     </div>` : "";
-  const rows = ATTENDANCE
-    .filter(a => scope.some(e => e.id === a.emp))
-    .sort((a,b) => b.date.localeCompare(a.date))
-    .slice(0, 60)
-    .map(a => {
-      const e = empById(a.emp);
-      return `<tr class="rowhover"><td><div style="display:flex;align-items:center;gap:9px">${avatarHtml(e,"sm")} ${esc(e.name)}</div></td>
-        <td>${uzDate(a.date)}</td>
-        <td class="num">${a.in} ${a.geo?`<a href="https://maps.google.com/?q=${a.geo}" target="_blank" rel="noopener" title="Xaritada ochish" style="text-decoration:none">📍</a>`:""} ${a.late?'<span class="tag danger">kechikdi</span>':'<span class="tag success">vaqtida</span>'} ${isFieldDay(a.emp,a.date)?'<span class="tag info" title="Admin ruxsati bilan tashqarida ishlagan">tashqarida</span>':""}</td>
-        <td class="num">${a.out ?? "<span class='tag gold'>ishda</span>"} ${a.auto?'<span class="tag gold" title="Ketdim bosilmagani uchun 18:00 bilan avtomatik yopilgan">avto</span>':""}
-          ${a.lunchLate?'<span class="tag danger" title="Obeddan 14:00 dan kech qaytgan">obed kech</span>':""}
-          ${otMinutes(a)>0 ? (a.ot==="pending" && canApproveOT(a)
-            ? `<span class="tag gold">+${otMinutes(a)} daq</span>
+
+  const recs = ATTENDANCE.filter(a => scope.some(e => String(e.id) === String(a.emp)));
+  const dates = [...new Set(recs.map(a => a.date))].sort((a,b) => b.localeCompare(a)).slice(0, 30);
+  if (dates.length && ![...OPEN_ACC].some(k => k.startsWith("d:"))) OPEN_ACC.add("d:" + dates[0]);
+
+  const attRow = a => {
+    const e = empById(a.emp);
+    const otm = otMinutes(a);
+    return `<div class="att-row">
+      <div class="att-who">${avatarHtml(e,"sm")}<div><b>${esc(e.name)}</b><br><span class="sub2">${esc(e.pos)}</span></div></div>
+      <div class="att-cells">
+        <div><span class="sub2">KELDI</span><b class="num">${a.in}</b>
+          ${a.geo?`<a href="https://maps.google.com/?q=${a.geo}" target="_blank" rel="noopener" style="text-decoration:none">📍</a>`:""}
+          ${a.late?'<span class="tag danger">kech</span>':'<span class="tag success">vaqtida</span>'}
+          ${isFieldDay(a.emp,a.date)?'<span class="tag info">tashqarida</span>':""}</div>
+        <div><span class="sub2">KETDI</span><b class="num">${a.out ?? "—"}</b>
+          ${!a.out?'<span class="tag gold">ishda</span>':""}
+          ${a.auto?'<span class="tag gold" title="18:00 bilan avto yopilgan">avto</span>':""}
+          ${a.lunchLate?'<span class="tag danger">obed kech</span>':""}</div>
+        <div><span class="sub2">SOAT</span><b class="num">${a.out ? workedHours(a).toFixed(1) : "—"}</b></div>
+        ${otm > 0 ? `<div><span class="sub2">QO'SHIMCHA</span>
+          ${a.ot === "pending" && canApproveOT(a)
+            ? `<span class="tag gold">+${otm} daq</span>
                <button class="btn success sm" onclick="decideOT('${a.emp}','${a.date}','approved')">✓</button>
                <button class="btn ghost sm" onclick="decideOT('${a.emp}','${a.date}','rejected')">✗</button>`
-            : `<span class="tag ${ {pending:"gold",approved:"success",rejected:"danger",none:"muted"}[a.ot||"none"] }" title="Qo'shimcha vaqt">+${otMinutes(a)} daq ${ {pending:"kutmoqda",approved:"✓",rejected:"rad",none:""}[a.ot||"none"] }</span>`) : ""}</td>
-        <td class="num">${a.out ? workedHours(a).toFixed(1)+" soat" : "—"}</td>
-        ${isAdmin?`<td><button class="btn ghost sm" onclick="openAttModal('${a.emp}','${a.date}')">✎</button></td>`:""}</tr>`;
-    }).join("");
-  const lateTotal = ATTENDANCE.filter(a => a.late && scope.some(e=>e.id===a.emp)).length;
+            : `<span class="tag ${ {pending:"gold",approved:"success",rejected:"danger",none:"muted"}[a.ot||"none"] }">+${otm} daq ${ {pending:"kutmoqda",approved:"✓",rejected:"rad",none:""}[a.ot||"none"] }</span>`}</div>` : ""}
+      </div>
+      ${isAdmin ? `<button class="btn ghost sm" onclick="openAttModal('${a.emp}','${a.date}')">✎</button>` : ""}
+    </div>`;
+  };
+
+  const days = dates.map(date => {
+    const dayRecs = recs.filter(a => a.date === date);
+    const dayLate = dayRecs.filter(a => a.late || a.lunchLate).length;
+    let inner;
+    if (grouped) {
+      const groups = [...DEPTS.map(d => ({ id: d.id, name: d.name, color: d.color })),
+                      { id: null, name: "Rahbariyat", color: "#7B5BA6" }];
+      inner = groups.map(g => {
+        const emps = scope.filter(e => String(e.dept) === String(g.id) || (!e.dept && g.id === null));
+        if (!emps.length) return "";
+        const dr = dayRecs.filter(a => emps.some(e => String(e.id) === String(a.emp)));
+        const came = dr.length;
+        const late = dr.filter(a => a.late || a.lunchLate).length;
+        const outg = dr.filter(a => isFieldDay(a.emp, a.date)).length;
+        const absent = emps.filter(e => !dr.some(a => String(a.emp) === String(e.id)));
+        const key = `d:${date}:${g.id}`;
+        return `<details class="acc dept-acc" ${OPEN_ACC.has(key)?"open":""} ontoggle="accToggle(this,'${key}')">
+          <summary><span class="kdot" style="background:${g.color}"></span><b>${g.name}</b>
+            <span class="sub2" style="margin-left:auto;text-align:right">${came}/${emps.length} keldi${late?` · <span style="color:var(--danger)">${late} kechikish</span>`:""}${outg?` · ${outg} tashqarida`:""}</span></summary>
+          <div class="acc-body">
+            ${dr.map(attRow).join("") || ""}
+            ${absent.length ? `<div class="sub2" style="padding:7px 4px">Belgilamagan: ${absent.map(e=>esc(e.name.split(" ")[0])).join(", ")}</div>` : ""}
+          </div>
+        </details>`;
+      }).join("");
+    } else inner = `<div class="acc-body">${dayRecs.map(attRow).join("") || '<div class="empty">Yozuv yo\'q</div>'}</div>`;
+    const key = `d:${date}`;
+    return `<details class="card acc day-acc" ${OPEN_ACC.has(key)?"open":""} ontoggle="accToggle(this,'${key}')">
+      <summary><b>${uzDate(date)}${date===TODAY?" · bugun":""}</b>
+        <span class="sub2" style="margin-left:auto">${dayRecs.length} belgilagan${dayLate?` · <span style="color:var(--danger)">${dayLate} kechikish</span>`:""}</span></summary>
+      ${inner}
+    </details>`;
+  }).join("");
+
   return `${officeCard}
-    <div class="filters"><span class="tag danger">Kechikishlar: ${lateTotal} ta</span>
+    <div class="filters">
       <span class="tag muted">Ish vaqti: 9:00–18:00 · obed 13:00–14:00 · reja 26 kun × 8 soat</span>
       ${USER.role!=="xodim" ? '<button class="btn ghost sm" onclick="exportAttendance()">⬇ Excel (CSV)</button>' : ""}
-      ${isAdmin ? '<button class="btn ghost sm" onclick="openAttModal()">+ Yozuv qo\'shish</button>' : ""}</div>
-    <div class="card t-wrap"><table>
-      <tr><th>Xodim</th><th>Sana</th><th>Kelgan</th><th>Ketgan</th><th>Ishlagan</th>${isAdmin?"<th></th>":""}</tr>${rows}
-    </table></div>`;
+      ${isAdmin ? '<button class="btn ghost sm" onclick="openAttModal()">+ Yozuv qo\'shish</button>' : ""}
+    </div>
+    ${days || '<div class="card empty">Davomat yozuvlari yo\'q</div>'}`;
 }
-
-/* Admin: davomat yozuvini tuzatish yoki unutilgan kunni qo'lda kiritish */
-/* Admin: bo'limlarni boshqarish */
-function openDeptModal(){
-  openModal(`
-    <h3>Bo'limlar</h3><div class="sub">Nomini/rangini o'zgartiring, yangi qo'shing yoki bo'sh bo'limni o'chiring</div>
-    ${DEPTS.map(d => `<div style="display:flex;gap:8px;margin-top:10px;align-items:center">
-      <input type="color" value="${d.color}" id="dc_${d.id}" style="width:46px;height:38px;padding:3px">
-      <input id="dn_${d.id}" value="${esc(d.name)}">
-      <button class="btn ghost sm" onclick="saveDept('${d.id}')">Saqlash</button>
-      <button class="btn sm" style="color:var(--danger)" onclick="delDept('${d.id}')">✕</button></div>`).join("")}
-    <div style="display:flex;gap:8px;margin-top:16px;border-top:1px solid var(--line);padding-top:14px;align-items:center">
-      <input type="color" value="#149E93" id="dc_new" style="width:46px;height:38px;padding:3px">
-      <input id="dn_new" placeholder="Yangi bo'lim nomi">
-      <button class="btn primary sm" onclick="addDept()">Qo'shish</button></div>
-    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
-}
-async function saveDept(id){
-  const name = $("#dn_" + id).value.trim(), color = $("#dc_" + id).value;
-  if (!name) return toast("Nom bo'sh bo'lmasin");
-  if (CLOUD) {
-    const { error } = await sb.from("departments").update({ name, color }).eq("id", id);
-    if (error) return toast("Xatolik: " + error.message);
-  }
-  const d = deptById(id); d.name = name; d.color = color;
-  toast("Bo'lim yangilandi"); render(); openDeptModal();
-}
-async function delDept(id){
-  if (EMPLOYEES.some(e => String(e.dept) === String(id)))
-    return toast("Bu bo'limda xodimlar bor — avval ularni boshqa bo'limga o'tkazing");
-  if (CLOUD) {
-    const { error } = await sb.from("departments").delete().eq("id", id);
-    if (error) return toast("Xatolik: " + error.message);
-  }
-  DEPTS = DEPTS.filter(d => String(d.id) !== String(id));
-  toast("Bo'lim o'chirildi"); render(); openDeptModal();
-}
-async function addDept(){
-  const name = $("#dn_new").value.trim(), color = $("#dc_new").value;
-  if (!name) return toast("Bo'lim nomini yozing");
-  const id = "d" + Date.now().toString(36);
-  if (CLOUD) {
-    const { error } = await sb.from("departments").insert({ id, name, color });
-    if (error) return toast("Xatolik: " + error.message);
-  }
-  DEPTS.push({ id, name, color });
-  toast("Bo'lim qo'shildi"); render(); openDeptModal();
-}
+let OPEN_ACC = new Set();
+function accToggle(el, key){ if (el.open) OPEN_ACC.add(key); else OPEN_ACC.delete(key); }
 
 /* Admin: kunlik tashqarida ishlash ruxsatlari */
 function openFieldModal(){
@@ -1681,7 +1794,7 @@ function pgFineBonus(){
    MODALLAR (admin amallari)
 ===================================================== */
 function openModal(html){ $("#modalBox").innerHTML = html; $("#modalBg").classList.add("open"); }
-function closeModal(){ $("#modalBg").classList.remove("open"); }
+function closeModal(){ $("#modalBg").classList.remove("open"); window.__taskOpen = null; }
 $("#modalBg").addEventListener("click", e => { if (e.target.id === "modalBg") closeModal(); });
 
 function empOptions(sel){
@@ -1717,18 +1830,32 @@ async function saveFB(){
 }
 
 function openTaskModal(){
+  voiceBlob = null;
   const assignable = scopeEmployees().filter(e => e.role !== "rahbar");
   openModal(`
     <h3>Yangi vazifa</h3><div class="sub">Vazifa «Vazifa tushdi» bosqichiga tushadi</div>
     <label>Xodim</label><select id="tEmp">${assignable.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join("")}</select>
     <label>Sarlavha</label><input id="tTitle" placeholder="Vazifa nomi">
     <label>Tavsif</label><textarea id="tDesc" rows="2" placeholder="Qisqacha tushuntirish"></textarea>
-    <label>Takrorlanishi</label><select id="tRep">
+    <label>Takrorlanishi (yakshanba — dam, hisobga olinmaydi)</label>
+    <select id="tRep" onchange="$('#repDays').style.display = this.value==='days' ? 'flex' : 'none'">
       <option value="none">Bir martalik</option>
-      <option value="daily">🔁 Har kuni</option>
-      <option value="weekly">🔁 Har hafta</option>
+      <option value="daily">🔁 Har kuni (Du–Sha)</option>
+      <option value="alt">🔁 Kun ora</option>
+      <option value="days">🔁 Haftaning tanlangan kunlari</option>
+      <option value="weekly">🔁 Har hafta (shu kundan)</option>
       <option value="monthly">🔁 Har oy</option></select>
-    <label>Muddat</label><input id="tDue" type="date" value="${TODAY}">
+    <div id="repDays" style="display:none;gap:6px;flex-wrap:wrap;margin-top:8px">
+      ${[["1","Du"],["2","Se"],["3","Chor"],["4","Pay"],["5","Ju"],["6","Sha"]].map(([v,l]) => `
+        <label class="day-chip"><input type="checkbox" value="${v}"><span>${l}</span></label>`).join("")}
+      <span style="font-size:11px;color:var(--muted);width:100%">Masalan: shanbalik uchun faqat "Sha"ni belgilang</span>
+    </div>
+    <label>Muddat (birinchi bajarilish kuni)</label><input id="tDue" type="date" value="${TODAY}">
+    <div style="display:flex;gap:8px;margin-top:14px;align-items:center;flex-wrap:wrap">
+      <button type="button" class="btn ghost sm" id="micBtn" onclick="toggleDictate('tDesc', this)">🎤 Ovozdan matn</button>
+      <button type="button" class="btn ghost sm" id="vnBtn" onclick="toggleVoiceNote(this)">🎙 Ovozli izoh yozish</button>
+    </div>
+    <audio id="vnPrev" controls style="width:100%;margin-top:8px;display:none"></audio>
     <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor qilish</button>
     <button class="btn primary" onclick="saveTask()">Berish</button></div>`);
 }
@@ -1737,16 +1864,31 @@ async function saveTask(){
   if (!title) return toast("Sarlavhani kiriting");
   const desc = $("#tDesc").value.trim(), due = $("#tDue").value;
   const empVal = CLOUD ? $("#tEmp").value : +$("#tEmp").value;
-  const trep = $("#tRep") ? $("#tRep").value : "none";
+  let trep = $("#tRep") ? $("#tRep").value : "none";
+  if (trep === "days") {
+    const picked = [...document.querySelectorAll("#repDays input:checked")].map(i => i.value);
+    if (!picked.length) return toast("Hafta kunlaridan kamida bittasini belgilang");
+    trep = "days:" + picked.join(",");
+  }
   if (CLOUD) {
     const { data, error } = await sb.from("tasks")
       .insert({ title, descr: desc, emp: empVal, created_by: USER.id, due, status: "new", repeat: trep })
       .select().single();
     if (error) return toast("Xatolik: " + error.message);
-    TASKS.push({ id: data.id, title, desc, emp: data.emp, by: USER.id, due, status: "new", rep: trep });
+    const nt = { id: data.id, title, desc, emp: data.emp, by: USER.id, due, status: "new", rep: trep };
+    if (voiceBlob) {
+      const path = data.id + ".webm";
+      const { error: ve } = await sb.storage.from("voice").upload(path, voiceBlob, { upsert: true, contentType: voiceBlob.type });
+      if (!ve) { await sb.from("tasks").update({ voice: path }).eq("id", data.id); nt.voice = path; }
+      else toast("Ovoz yuklanmadi: " + ve.message);
+    }
+    TASKS.push(nt);
   } else {
-    TASKS.push({ id: Date.now(), title, desc, emp: empVal, by: USER.id, due, status: "new", rep: trep });
+    const nt = { id: Date.now(), title, desc, emp: empVal, by: USER.id, due, status: "new", rep: trep };
+    if (voiceBlob) nt.voiceUrl = URL.createObjectURL(voiceBlob);
+    TASKS.push(nt);
   }
+  voiceBlob = null;
   closeModal(); toast("Vazifa berildi"); go("tasks");
 }
 
@@ -1855,7 +1997,7 @@ async function loadAll(){
     pos: p.pos, salary: +p.salary, color: p.color, login: toShort(p.email),
     contract: p.contract_until, fieldWork: !!p.field_work }));
   TASKS = (tk.data || []).map(t => ({ id: t.id, title: t.title, desc: t.descr, emp: t.emp,
-    by: t.created_by, due: t.due, status: t.status, doneAt: t.done_at, rep: t.repeat || "none" }));
+    by: t.created_by, due: t.due, status: t.status, doneAt: t.done_at, rep: t.repeat || "none", voice: t.voice }));
   FINEBONUS = (fb.data || []).map(f => ({ id: f.id, emp: f.emp, type: f.type,
     amount: +f.amount, reason: f.reason, date: f.date }));
   ATTENDANCE = (at.data || []).map(a => ({ id: a.id, emp: a.emp, date: a.date,
@@ -1886,12 +2028,28 @@ async function doLogin(){
   $("#loginUser").value = ""; $("#loginPass").value = "";
 }
 
+function subscribeRealtime(){
+  if (!CLOUD || window.__rt) return;
+  window.__rt = sb.channel("gm-live")
+    .on("postgres_changes", { event: "*", schema: "public" }, () => {
+      clearTimeout(window.__rtT);
+      window.__rtT = setTimeout(async () => {
+        if (!USER) return;
+        await loadAll();
+        const me = EMPLOYEES.find(e => String(e.id) === String(USER.id));
+        if (me) USER = me;
+        render();
+        if (window.__taskOpen && document.getElementById("cmList")) loadComments(window.__taskOpen);
+      }, 500);
+    })
+    .subscribe();
+}
 function enterApp(u){
   USER = u;
   PAGE = (USER.role === "xodim") ? "me" : "dashboard";
   $("#login").style.display = "none";
   $("#app").style.display = "block";
-  render(); startClock();
+  render(); startClock(); subscribeRealtime();
   toast(`Xush kelibsiz, ${USER.name.split(" ")[0]}!`);
 }
 
