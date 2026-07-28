@@ -621,14 +621,22 @@ function effDetail(id){
   const onTime = done.filter(x => !x.doneAt || x.doneAt <= x.due);
   const at = empAttendance(id);
   const punct = at.filter(a => !a.late && !a.lunchLate);
-  const tScore = t.length ? done.length / t.length : 0.75;
-  const oScore = done.length ? onTime.length / done.length : 1;
-  const pScore = at.length ? punct.length / at.length : 1;
+  const tScore = t.length ? done.length / t.length : 0;
+  const oScore = done.length ? onTime.length / done.length : 0;
+  const pScore = at.length ? punct.length / at.length : 0;
+  // KPI faqat MAVJUD ma'lumot qismlaridan hisoblanadi (yo'q qism 100% deb olinmaydi).
+  // Umuman ma'lumot bo'lmasa — KPI 0 va "ma'lumot yig'ilmoqda" holati.
+  const parts = [];
+  if (t.length)    parts.push([tScore, 0.6]);
+  if (done.length) parts.push([oScore, 0.2]);
+  if (at.length)   parts.push([pScore, 0.2]);
+  const wSum = parts.reduce((s,p) => s + p[1], 0);
+  const kpi = wSum ? Math.round(parts.reduce((s,p) => s + p[0]*p[1], 0) / wSum * 100) : 0;
   return {
     tTotal: t.length, tDone: done.length, onTime: onTime.length,
-    days: at.length, punct: punct.length,
+    days: at.length, punct: punct.length, noData: wSum === 0,
     tPc: Math.round(tScore * 100), oPc: Math.round(oScore * 100), pPc: Math.round(pScore * 100),
-    kpi: Math.round((tScore * 0.6 + oScore * 0.2 + pScore * 0.2) * 100),
+    kpi,
   };
 }
 function efficiency(id){ return effDetail(id).kpi; }
@@ -973,14 +981,17 @@ async function deleteDoc(empId, name){
 
 /* ---------- REYTING (hammaga ochiq, KPI bo'yicha) ---------- */
 function kpiFromNums(n){
-  const tS = n.t_total ? n.t_done / n.t_total : 0.75;
-  const oS = n.t_done ? n.on_time / n.t_done : 1;
-  const pS = n.days ? n.punct / n.days : 1;
-  return Math.round((tS * 0.6 + oS * 0.2 + pS * 0.2) * 100);
+  const parts = [];
+  if (+n.t_total) parts.push([n.t_done / n.t_total, 0.6]);
+  if (+n.t_done)  parts.push([n.on_time / n.t_done, 0.2]);
+  if (+n.days)    parts.push([n.punct / n.days, 0.2]);
+  const wSum = parts.reduce((s,p) => s + p[1], 0);
+  return wSum ? Math.round(parts.reduce((s,p) => s + p[0]*p[1], 0) / wSum * 100) : 0;
 }
 function ratingRows(list){
   const medal = i => i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `<b class="num" style="color:var(--muted)">${i+1}</b>`;
   return list.map((r, i) => {
+    r.noData = !(+r.t_total || +r.days);
     const me = String(r.id) === String(USER.id);
     const d = r.dept ? deptById(r.dept) : null;
     return `<div class="fb-item" style="${me ? "background:var(--accent-soft);border-radius:12px" : ""}">
@@ -988,7 +999,7 @@ function ratingRows(list){
       <div class="avatar sm" style="background:${r.color};align-self:center">${initials(r.name)}</div>
       <div class="meta"><b>${esc(r.name)}${me ? " (siz)" : ""} ${d ? `<span class="tag" style="background:${d.color}22;color:${d.color}">${d.name.replace(" bo'limi","")}</span>` : ""}</b>
         <span>vazifa ${r.t_done}/${r.t_total} · muddatida ${r.on_time} · vaqtida kelish ${r.punct}/${r.days} kun · ${(+r.hours).toFixed(1)} soat</span></div>
-      <div class="amount num">${r.kpi}%<small>KPI</small></div>
+      <div class="amount num">${r.noData ? "—" : r.kpi + "%"}<small>${r.noData ? "ma'lumot yo'q" : "KPI"}</small></div>
     </div>`;
   }).join("");
 }
@@ -1002,7 +1013,7 @@ function pgRating(){
     return { id: e.id, name: e.name, dept: e.dept, color: e.color,
       t_total: d.tTotal, t_done: d.tDone, on_time: d.onTime, days: d.days, punct: d.punct,
       hours: earn.hours, kpi: d.kpi };
-  }).sort((a,b) => b.kpi - a.kpi || b.hours - a.hours);
+  }).sort((a,b) => (a.t_total||a.days?0:1) - (b.t_total||b.days?0:1) || b.kpi - a.kpi || b.hours - a.hours);
   return note + `<div class="card">${ratingRows(list)}</div>`;
 }
 async function loadRating(){
@@ -1010,7 +1021,7 @@ async function loadRating(){
   const { data, error } = await sb.rpc("rating_data");
   if (error) { el.innerHTML = `<div class="empty">Yuklanmadi: ${esc(error.message)}<br>supabase-update-2.sql bajarilganini tekshiring</div>`; return; }
   const list = (data || []).map(r => ({ ...r, kpi: kpiFromNums(r) }))
-    .sort((a,b) => b.kpi - a.kpi || b.hours - a.hours);
+    .sort((a,b) => ((a.t_total||a.days)?0:1) - ((b.t_total||b.days)?0:1) || b.kpi - a.kpi || b.hours - a.hours);
   el.innerHTML = ratingRows(list) || `<div class="empty">Ma'lumot yo'q</div>`;
 }
 
@@ -1124,7 +1135,7 @@ function pgDashboard(){
         <td class="num">${d.tDone ? `${d.onTime}/${d.tDone} <span style="color:var(--muted)">(${d.oPc}%)</span>` : "—"}</td>
         <td class="num">${d.punct}/${d.days} kun <span style="color:var(--muted)">(${d.pPc}%)</span>
           ${d.days - d.punct > 0 ? `<span class="tag danger">${d.days - d.punct} kechikish</span>` : ""}</td>
-        <td><b class="num" style="font-size:14.5px">${d.kpi}%</b></td>
+        <td><b class="num" style="font-size:14.5px">${d.noData ? '<span style="color:var(--muted)">—</span>' : d.kpi + "%"}</b></td>
       </tr>`; }).join("")}
     </table></div>
     <p style="font-size:11.5px;color:var(--muted);margin-top:8px">Qatorni bossangiz xodimning to'liq profili ochiladi.</p>`;
