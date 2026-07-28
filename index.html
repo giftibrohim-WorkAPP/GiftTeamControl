@@ -562,11 +562,13 @@ function toast(msg){
 function avatarHtml(e, cls=""){
   return `<div class="avatar ${cls}" style="background:${e.color}">${initials(e.name)}</div>`;
 }
+// Rahbariyat darajasi: rahbar va direktor bir xil to'liq huquqqa ega
+const isExec = r => r === "rahbar" || r === "direktor";
 function roleLabel(r){
-  return {admin:"Admin", rahbar:"Rahbar", boshliq:"Bo'lim boshlig'i", xodim:"Xodim"}[r];
+  return {admin:"Admin", rahbar:"Rahbar", direktor:"Direktor", boshliq:"Bo'lim boshlig'i", xodim:"Xodim"}[r];
 }
 function roleTag(r){
-  const cls = {admin:"danger", rahbar:"gold", boshliq:"info", xodim:"accent"}[r];
+  const cls = {admin:"danger", rahbar:"gold", direktor:"gold", boshliq:"info", xodim:"accent"}[r];
   return `<span class="tag ${cls}">${roleLabel(r)}</span>`;
 }
 
@@ -677,7 +679,7 @@ function deptEfficiency(deptId){
 }
 // Rol bo'yicha ko'rinadigan xodimlar doirasi
 function scopeEmployees(){
-  if (USER.role === "admin" || USER.role === "rahbar") return EMPLOYEES.filter(e => e.role !== "admin");
+  if (USER.role === "admin" || isExec(USER.role)) return EMPLOYEES.filter(e => e.role !== "admin");
   if (USER.role === "boshliq") return EMPLOYEES.filter(e => e.dept === USER.dept);
   return [USER];
 }
@@ -759,7 +761,7 @@ function notifList(){
     .forEach(t => items.push({ ic:"⚠️", cls:"danger", text:`Muddati o'tdi: «${t.title}» — ${empById(t.emp).name.split(" ")[0]}`, go:"tasks" }));
   ATTENDANCE.filter(a => a.ot === "pending" && canApproveOT(a) && ids.includes(a.emp)).forEach(a =>
     items.push({ ic:"⏱", cls:"gold", text:`${empById(a.emp).name.split(" ")[0]} — qo'shimcha ${otMinutes(a)} daqiqa tasdiq kutmoqda (${uzDate(a.date)})`, go:"attendance" }));
-  if (USER.role === "admin" || USER.role === "rahbar")
+  if (USER.role === "admin" || isExec(USER.role))
     EMPLOYEES.filter(e => e.contract && daysTo(e.contract) <= 30).forEach(e =>
       items.push({ ic:"📄", cls:"gold", text: daysTo(e.contract) < 0
         ? `${e.name} — shartnoma muddati O'TGAN (${uzDate(e.contract)})`
@@ -819,7 +821,7 @@ function navItems(){
   n.push({ id:"attendance", label:"Davomat", icon:IC.clock });
   n.push({ id:"rating", label:"Reyting", icon:IC.trophy });
   n.push({ id:"finebonus", label:"Jarima / Bonus", icon:IC.money });
-  if (USER.role === "admin" || USER.role === "rahbar") n.push({ id:"payroll", label:"Hisob-kitob", icon:IC.calc });
+  if (USER.role === "admin" || isExec(USER.role)) n.push({ id:"payroll", label:"Hisob-kitob", icon:IC.calc });
   return n;
 }
 function renderNav(){
@@ -901,7 +903,7 @@ function pgProfile(){
       : `<div class="empty">Hujjatlar bo'limi Supabase ulanganda ishlaydi (demo rejimda mavjud emas)</div>`}
     </div>`;
   // Pul ko'rsatkichlari: admin/rahbar har kimni; boshliq esa FAQAT o'zini ko'radi
-  const seeMoney = USER.role === "admin" || USER.role === "rahbar" || String(e.id) === String(USER.id);
+  const seeMoney = USER.role === "admin" || isExec(USER.role) || String(e.id) === String(USER.id);
   const moneyCards = seeMoney ? `
       <div class="card stat"><div class="lbl">${IC.money} Oy boshidan</div><div class="val num">${fmtShort(earn.total)}</div>
         <div class="delta" style="color:var(--muted)">oylik ${fmtShort(e.salary)}</div></div>
@@ -1012,7 +1014,7 @@ function pgRating(){
     Reyting hammaga bir xil ochiq formula bilan tuziladi: <b>KPI = 60% vazifa bajarilishi + 20% muddatida topshirish + 20% o'z vaqtida kelish</b>
     (obeddan 14:00 dan kech qaytish ham kechikish hisoblanadi). Maosh va jarima ma'lumotlari reytingda ko'rsatilmaydi.</p>`;
   if (CLOUD) return note + `<div class="card" id="ratingList"><div class="empty">Yuklanmoqda...</div></div>`;
-  const list = EMPLOYEES.filter(e => e.role !== "admin").map(e => {
+  const list = EMPLOYEES.filter(e => e.role === "xodim" || e.role === "boshliq").map(e => {
     const d = effDetail(e.id), earn = earnedToDate(e);
     return { id: e.id, name: e.name, dept: e.dept, color: e.color,
       t_total: d.tTotal, t_done: d.tDone, on_time: d.onTime, days: d.days, punct: d.punct,
@@ -1301,7 +1303,7 @@ function taskActions(t){
 }
 function pgTasks(){
   const list = taskScope();
-  const canAssign = USER.role === "admin" || USER.role === "boshliq" || USER.role === "rahbar";
+  const canAssign = USER.role === "admin" || USER.role === "boshliq" || isExec(USER.role);
   const addBtn = canAssign ? `<button class="btn primary" onclick="openTaskModal()">${IC.plus} Vazifa berish</button>` : "";
   const cols = KCOLS.map(c => {
     const items = list.filter(t => t.status === c.id);
@@ -1514,7 +1516,7 @@ async function approveTask(id){
 function pgAttendance(){
   const scope = scopeEmployees();
   const isAdmin = USER.role === "admin";
-  const grouped = USER.role === "admin" || USER.role === "rahbar"; // bo'limlar kesimida
+  const grouped = USER.role === "admin" || isExec(USER.role); // bo'limlar kesimida
   const officeCard = isAdmin ? `
     <div class="card" style="padding:14px 16px;margin-bottom:15px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
       <div style="flex:1;min-width:210px"><b style="font-size:13.5px">📍 Ishxona joylashuvi (geofence)</b><br>
@@ -1789,7 +1791,7 @@ async function checkLunch(){
 /* Qo'shimcha vaqtni tasdiqlash/rad etish (boshliq, rahbar, admin) */
 function canApproveOT(a){
   if (String(a.emp) === String(USER.id)) return false;
-  if (USER.role === "admin" || USER.role === "rahbar") return true;
+  if (USER.role === "admin" || isExec(USER.role)) return true;
   return USER.role === "boshliq" && String(empById(a.emp)?.dept) === String(USER.dept);
 }
 async function decideOT(emp, date, status){
@@ -1868,7 +1870,7 @@ async function saveFB(){
 
 function openTaskModal(){
   voiceBlob = null;
-  const assignable = scopeEmployees().filter(e => e.role !== "rahbar");
+  const assignable = scopeEmployees().filter(e => !isExec(e.role));
   openModal(`
     <h3>Yangi vazifa</h3><div class="sub">Vazifa «Vazifa tushdi» bosqichiga tushadi</div>
     <label>Xodim</label><select id="tEmp">${assignable.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join("")}</select>
@@ -1941,7 +1943,8 @@ function openEmpModal(id){
     <label>Rol (kirishdagi huquqlarni belgilaydi)</label><select id="eRole">
       <option value="xodim" ${e?.role==="xodim"?"selected":""}>Xodim — faqat o'zinikini ko'radi</option>
       <option value="boshliq" ${e?.role==="boshliq"?"selected":""}>Bo'lim boshlig'i — o'z bo'limi + tasdiqlash</option>
-      <option value="rahbar" ${e?.role==="rahbar"?"selected":""}>Rahbar — barcha ko'rsatkichlar</option></select>
+      <option value="rahbar" ${e?.role==="rahbar"?"selected":""}>Rahbar — barcha ko'rsatkichlar (reytingsiz)</option>
+      <option value="direktor" ${e?.role==="direktor"?"selected":""}>Direktor — rahbar bilan bir xil (reytingsiz)</option></select>
     <label>Oylik maosh (so'm) — hisob-kitob shu summadan yuritiladi</label>
     <input id="eSalary" type="number" value="${e?e.salary:5000000}" step="500000">
     <label>Shartnoma muddati (qachongacha)</label>
@@ -1972,7 +1975,7 @@ async function saveEmp(id){
   const contract = $("#eContract").value || null;
   const fieldWork = !!$("#eField").checked;
   const fields = { name, pos: $("#ePos").value.trim() || "Xodim",
-                   dept: role === "rahbar" ? null : $("#eDept").value,
+                   dept: isExec(role) ? null : $("#eDept").value,
                    role, salary: +$("#eSalary").value || 0 };
   if (CLOUD) {
     if (id) { // tahrirlash — profil yangilanadi (login/parol Dashboard orqali)
