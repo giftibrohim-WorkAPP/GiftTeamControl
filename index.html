@@ -819,7 +819,7 @@ function navItems(){
   n.push({ id:"attendance", label:"Davomat", icon:IC.clock });
   n.push({ id:"rating", label:"Reyting", icon:IC.trophy });
   n.push({ id:"finebonus", label:"Jarima / Bonus", icon:IC.money });
-  if (USER.role !== "xodim") n.push({ id:"payroll", label:"Hisob-kitob", icon:IC.calc });
+  if (USER.role === "admin" || USER.role === "rahbar") n.push({ id:"payroll", label:"Hisob-kitob", icon:IC.calc });
   return n;
 }
 function renderNav(){
@@ -900,6 +900,13 @@ function pgProfile(){
           <span style="font-size:11.5px;color:var(--muted);margin-left:8px">pasport, shartnoma, diplom...</span></div>` : ""}`
       : `<div class="empty">Hujjatlar bo'limi Supabase ulanganda ishlaydi (demo rejimda mavjud emas)</div>`}
     </div>`;
+  // Pul ko'rsatkichlari: admin/rahbar har kimni; boshliq esa FAQAT o'zini ko'radi
+  const seeMoney = USER.role === "admin" || USER.role === "rahbar" || String(e.id) === String(USER.id);
+  const moneyCards = seeMoney ? `
+      <div class="card stat"><div class="lbl">${IC.money} Oy boshidan</div><div class="val num">${fmtShort(earn.total)}</div>
+        <div class="delta" style="color:var(--muted)">oylik ${fmtShort(e.salary)}</div></div>
+      <div class="card stat"><div class="lbl">${IC.up} Bonus / Jarima</div>
+        <div class="val num" style="font-size:18px"><span style="color:var(--success)">+${fmtShort(earn.bonus)}</span> · <span style="color:var(--danger)">−${fmtShort(earn.fine)}</span></div></div>` : "";
   return `
     <div class="card" style="padding:18px;display:flex;gap:15px;align-items:center;flex-wrap:wrap;margin-bottom:15px">
       <button class="btn ghost sm" onclick="go('employees')">← Orqaga</button>
@@ -910,13 +917,10 @@ function pgProfile(){
       <div style="display:flex;gap:7px;flex-wrap:wrap">${adminBtns}</div>
     </div>
     <div class="grid stats">
-      <div class="card stat"><div class="lbl">${IC.dash} KPI</div><div class="val num">${efficiency(e.id)}%</div></div>
+      <div class="card stat"><div class="lbl">${IC.dash} KPI</div><div class="val num">${effDetail(e.id).noData ? "—" : efficiency(e.id)+"%"}</div></div>
       <div class="card stat"><div class="lbl">${IC.clock} Ishlagan soat</div><div class="val num">${earn.hours.toFixed(1)}</div>
         <div class="delta" style="color:${earn.diff>=0?"var(--success)":"var(--danger)"}">reja ${earn.planSoFar} · ${earn.diff>=0?"+":"−"}${Math.abs(earn.diff).toFixed(1)}</div></div>
-      <div class="card stat"><div class="lbl">${IC.money} Oy boshidan</div><div class="val num">${fmtShort(earn.total)}</div>
-        <div class="delta" style="color:var(--muted)">oylik ${fmtShort(e.salary)}</div></div>
-      <div class="card stat"><div class="lbl">${IC.up} Bonus / Jarima</div>
-        <div class="val num" style="font-size:18px"><span style="color:var(--success)">+${fmtShort(earn.bonus)}</span> · <span style="color:var(--danger)">−${fmtShort(earn.fine)}</span></div></div>
+      ${moneyCards}
     </div>
     ${kpiBreakdown(e)}
     ${docsCard}
@@ -925,8 +929,8 @@ function pgProfile(){
       <div class="fb-item"><div class="meta"><b>${esc(t.title)}</b><span>muddat ${uzDate(t.due)}</span></div>
       <span class="tag ${stCls[t.status]}">${stLbl[t.status]}</span></div>`).join("") : `<div class="empty">Vazifa berilmagan</div>`}</div>
     <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:6px" id="profTwo">
-      <div><h3 class="section-title">Jarima / bonus tarixi</h3>
-        <div class="card">${myFB.length ? myFB.map(fbRow).join("") : `<div class="empty">Yozuv yo'q</div>`}</div></div>
+      ${seeMoney ? `<div><h3 class="section-title">Jarima / bonus tarixi</h3>
+        <div class="card">${myFB.length ? myFB.map(fbRow).join("") : `<div class="empty">Yozuv yo'q</div>`}</div></div>` : ""}
       <div><h3 class="section-title">So'nggi davomat</h3>
         <div class="card t-wrap"><table>
           <tr><th>Sana</th><th>Kelgan</th><th>Ketgan</th><th>Soat</th></tr>
@@ -1082,15 +1086,24 @@ function pgPayroll(){
 function pgDashboard(){
   const scope = scopeEmployees();
   const ids = scope.map(e => e.id);
+  const isHead = USER.role === "boshliq";
   const bonus = FINEBONUS.filter(f => f.type==="bonus" && ids.includes(f.emp)).reduce((s,f)=>s+f.amount,0);
   const fine  = FINEBONUS.filter(f => f.type==="fine"  && ids.includes(f.emp)).reduce((s,f)=>s+f.amount,0);
   const payroll = scope.reduce((s,e) => s + earnedToDate(e).total, 0);
   const avgEff = Math.round(scope.reduce((s,e)=>s+efficiency(e.id),0) / scope.length);
   const pending = TASKS.filter(t => t.status==="review" && ids.includes(t.emp)).length;
+  const lateTotal = ATTENDANCE.filter(a => (a.late || a.lunchLate) && ids.includes(a.emp)).length;
 
-  const scopeLabel = USER.role==="boshliq" ? deptById(USER.dept).name : "Butun kompaniya";
+  const scopeLabel = isHead ? deptById(USER.dept).name : "Butun kompaniya";
 
-  let stats = `
+  // Boshliq: pul (bonus/jarima/fond) ko'rinmaydi — o'rniga davomat ko'rsatkichlari
+  let stats = isHead ? `
+    <div class="grid stats">
+      <div class="card stat"><div class="lbl">${IC.users} Xodimlar</div><div class="val num">${scope.length}</div><div class="delta" style="color:var(--muted)">${scopeLabel}</div></div>
+      <div class="card stat"><div class="lbl">${IC.dash} O'rtacha samaradorlik</div><div class="val num">${avgEff}%</div><div class="delta" style="color:var(--muted)">o'z bo'limingiz</div></div>
+      <div class="card stat"><div class="lbl">${IC.clock} Kechikishlar</div><div class="val num" style="color:${lateTotal?"var(--danger)":"var(--success)"}">${lateTotal}</div><div class="delta" style="color:var(--muted)">shu oy, o'z bo'limingiz</div></div>
+      <div class="card stat"><div class="lbl">${IC.tasks} Tasdiq kutmoqda</div><div class="val num">${pending}</div><div class="delta" style="color:${pending?"var(--gold)":"var(--muted)"}">${pending?"ta vazifa":"vazifa yo'q"}</div></div>
+    </div>` : `
     <div class="grid stats">
       <div class="card stat"><div class="lbl">${IC.users} Xodimlar</div><div class="val num">${scope.length}</div><div class="delta" style="color:var(--muted)">${scopeLabel}</div></div>
       <div class="card stat"><div class="lbl">${IC.up} Jami bonuslar</div><div class="val num" style="color:var(--success)">+${fmtShort(bonus)}</div><div class="delta" style="color:var(--muted)">iyul oyi</div></div>
@@ -1099,7 +1112,15 @@ function pgDashboard(){
       <div class="card stat"><div class="lbl">${IC.dash} O'rtacha samaradorlik</div><div class="val num">${avgEff}%</div><div class="delta" style="color:${pending? "var(--gold)":"var(--muted)"}">${pending? pending+" ta vazifa tasdiq kutmoqda":"tasdiq kutayotgan vazifa yo'q"}</div></div>
     </div>`;
 
-  let charts = `
+  // Boshliq: butun kompaniya bo'limlar grafigi emas, faqat o'z jamoasi
+  let charts = isHead ? `
+    <div class="card chart-card">
+      <h3>Jamoam samaradorligi</h3><div class="sub">${scopeLabel} · o'rtacha KPI ${avgEff}%</div>
+      ${[...scope].sort((a,b)=>efficiency(b.id)-efficiency(a.id)).map(e=>`
+        <div class="bar-row"><span class="nm" style="width:130px">${esc(e.name.split(" ")[0])} ${esc(e.name.split(" ")[1]?.[0]||"")}.</span>
+        <div class="track"><div class="fill" style="width:${efficiency(e.id)}%"></div></div>
+        <span class="pc num">${effDetail(e.id).noData ? "—" : efficiency(e.id)+"%"}</span></div>`).join("")}
+    </div>` : `
     <div class="grid charts">
       <div class="card chart-card"><h3>Oylik samaradorlik dinamikasi</h3><div class="sub">Bo'limlar kesimida, % (yanvar–iyul)</div>${svgLineChart()}</div>
       <div class="card chart-card"><h3>Bo'limlar samaradorligi</h3><div class="sub">Joriy oy, o'rtacha KPI</div>${deptBars()}
@@ -1237,9 +1258,14 @@ function pgEmployees(){
       ${contractWarn}
       <button class="btn ghost sm" style="align-self:flex-start" onclick="viewEmp('${e.id}')">Profilni ochish →</button>
       <div class="emp-mini">
-        <div><b class="num">${efficiency(e.id)}%</b><span>KPI</span></div>
-        <div><b class="num" style="color:var(--success)">+${fmtShort(earn.bonus)}</b><span>Bonus</span></div>
-        <div><b class="num" style="color:var(--danger)">−${fmtShort(earn.fine)}</b><span>Jarima</span></div>
+        ${(USER.role==="admin"||USER.role==="rahbar") ? `
+          <div><b class="num">${effDetail(e.id).noData?"—":efficiency(e.id)+"%"}</b><span>KPI</span></div>
+          <div><b class="num" style="color:var(--success)">+${fmtShort(earn.bonus)}</b><span>Bonus</span></div>
+          <div><b class="num" style="color:var(--danger)">−${fmtShort(earn.fine)}</b><span>Jarima</span></div>`
+        : `
+          <div><b class="num">${effDetail(e.id).noData?"—":efficiency(e.id)+"%"}</b><span>KPI</span></div>
+          <div><b class="num">${effDetail(e.id).tDone}/${effDetail(e.id).tTotal}</b><span>Vazifa</span></div>
+          <div><b class="num" style="color:${effDetail(e.id).days-effDetail(e.id).punct>0?'var(--danger)':'var(--success)'}">${effDetail(e.id).days-effDetail(e.id).punct}</b><span>Kechikish</span></div>`}
       </div>
       ${adminBtns}
     </div>`;
