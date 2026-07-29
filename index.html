@@ -747,9 +747,9 @@ const IC = {
 /* ============ BILDIRISHNOMALAR (ilova ichida) ============ */
 function notifList(){
   const items = [], seen = new Set();
-  const ids = scopeEmployees().map(e=>e.id);
-  if (USER.role === "boshliq" || USER.role === "admin")
-    TASKS.filter(t => t.status==="review" && ids.includes(t.emp) && t.emp !== USER.id).forEach(t => {
+  const ids = scopeEmployees().map(e => String(e.id));
+  if (USER.role === "boshliq" || USER.role === "admin" || isExec(USER.role))
+    TASKS.filter(t => t.status==="review" && ids.includes(String(t.emp)) && String(t.emp) !== String(USER.id)).forEach(t => {
       seen.add(t.id);
       items.push({ ic:"✅", cls:"info", text:`«${t.title}» tasdiq kutmoqda — ${empById(t.emp).name.split(" ")[0]}`, go:"tasks" });
     });
@@ -757,13 +757,13 @@ function notifList(){
     seen.add(t.id);
     items.push({ ic:"🆕", cls:"accent", text:`Yangi vazifa: «${t.title}» (muddat ${uzDate(t.due)})`, go:"tasks" });
   });
-  TASKS.filter(t => (t.emp===USER.id || ids.includes(t.emp)) && t.status!=="done" && t.due < TODAY && !seen.has(t.id))
+  TASKS.filter(t => (String(t.emp)===String(USER.id) || ids.includes(String(t.emp))) && t.status!=="done" && t.due < TODAY && !seen.has(t.id))
     .forEach(t => items.push({ ic:"⚠️", cls:"danger", text:`Muddati o'tdi: «${t.title}» — ${empById(t.emp).name.split(" ")[0]}`, go:"tasks" }));
-  ATTENDANCE.filter(a => a.ot === "pending" && canApproveOT(a) && ids.includes(a.emp)).forEach(a =>
+  ATTENDANCE.filter(a => a.ot === "pending" && canApproveOT(a) && ids.includes(String(a.emp))).forEach(a =>
     items.push({ ic:"⏱", cls:"gold", text:`${empById(a.emp).name.split(" ")[0]} — qo'shimcha ${otMinutes(a)} daqiqa tasdiq kutmoqda (${uzDate(a.date)})`, go:"attendance" }));
-  ATTENDANCE.filter(a => a.inField && a.inAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(a.emp)).forEach(a =>
+  ATTENDANCE.filter(a => a.inField && a.inAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
     items.push({ ic:"🚶", cls:"info", text:`${empById(a.emp).name.split(" ")[0]} — tashqaridan kelishni tasdiqlash (${uzDate(a.date)})`, go:"attendance" }));
-  ATTENDANCE.filter(a => a.outField && a.outAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(a.emp)).forEach(a =>
+  ATTENDANCE.filter(a => a.outField && a.outAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
     items.push({ ic:"🚶", cls:"info", text:`${empById(a.emp).name.split(" ")[0]} — tashqarida ish tugatishni tasdiqlash (${uzDate(a.date)})`, go:"attendance" }));
   if (USER.role === "admin" || isExec(USER.role))
     EMPLOYEES.filter(e => e.contract && daysTo(e.contract) <= 30).forEach(e =>
@@ -1296,15 +1296,18 @@ function taskScope(){
   return TASKS.filter(t => ids.includes(t.emp) || t.emp === USER.id);
 }
 function taskActions(t){
-  const isOwner = t.emp === USER.id;
-  const isHead  = USER.role === "boshliq" && empById(t.emp)?.dept === USER.dept && t.emp !== USER.id;
+  const emp = empById(t.emp);
+  const isOwner = String(t.emp) === String(USER.id);
   const isAdmin = USER.role === "admin";
+  const isExecutive = isExec(USER.role); // rahbar, direktor — hammani tasdiqlaydi
+  const isHead  = USER.role === "boshliq" && String(emp?.dept) === String(USER.dept) && !isOwner;
+  const canApprove = isAdmin || isExecutive || isHead; // vazifani tasdiqlaydiganlar
   let btns = [];
   if (t.status === "new" && (isOwner || isAdmin))
     btns.push(`<button class="btn primary sm" onclick="moveTask('${t.id}','progress')">Boshlash</button>`);
   if (t.status === "progress" && (isOwner || isAdmin))
     btns.push(`<button class="btn primary sm" onclick="moveTask('${t.id}','review')">Tugatdim — tasdiqqa</button>`);
-  if (t.status === "review" && (isHead || isAdmin))
+  if (t.status === "review" && canApprove)
     btns.push(`<button class="btn success sm" onclick="approveTask('${t.id}')">Tasdiqlash</button>
                <button class="btn ghost sm" onclick="moveTask('${t.id}','progress',true)">Qaytarish</button>`);
   return btns.length ? `<div class="actions">${btns.join("")}</div>` : "";
@@ -1840,9 +1843,15 @@ async function checkLunch(){
 
 /* Qo'shimcha vaqtni tasdiqlash/rad etish (boshliq, rahbar, admin) */
 function canApproveOT(a){
-  if (String(a.emp) === String(USER.id)) return false;
+  if (String(a.emp) === String(USER.id)) return false; // o'zini tasdiqlay olmaydi
+  const emp = empById(a.emp);
+  if (!emp) return false;
+  // Direktor, rahbar, admin — hammani tasdiqlaydi
   if (USER.role === "admin" || isExec(USER.role)) return true;
-  return USER.role === "boshliq" && String(empById(a.emp)?.dept) === String(USER.dept);
+  // Bo'lim boshlig'i — faqat O'Z BO'LIMINING ODDIY XODIMINI (boshqa boshliq yoki administrativni emas)
+  if (USER.role === "boshliq")
+    return emp.role === "xodim" && String(emp.dept) === String(USER.dept);
+  return false;
 }
 async function decideOT(emp, date, status){
   const a = ATTENDANCE.find(x => String(x.emp) === String(emp) && x.date === date);
