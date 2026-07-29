@@ -761,6 +761,10 @@ function notifList(){
     .forEach(t => items.push({ ic:"⚠️", cls:"danger", text:`Muddati o'tdi: «${t.title}» — ${empById(t.emp).name.split(" ")[0]}`, go:"tasks" }));
   ATTENDANCE.filter(a => a.ot === "pending" && canApproveOT(a) && ids.includes(a.emp)).forEach(a =>
     items.push({ ic:"⏱", cls:"gold", text:`${empById(a.emp).name.split(" ")[0]} — qo'shimcha ${otMinutes(a)} daqiqa tasdiq kutmoqda (${uzDate(a.date)})`, go:"attendance" }));
+  ATTENDANCE.filter(a => a.inField && a.inAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(a.emp)).forEach(a =>
+    items.push({ ic:"🚶", cls:"info", text:`${empById(a.emp).name.split(" ")[0]} — tashqaridan kelishni tasdiqlash (${uzDate(a.date)})`, go:"attendance" }));
+  ATTENDANCE.filter(a => a.outField && a.outAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(a.emp)).forEach(a =>
+    items.push({ ic:"🚶", cls:"info", text:`${empById(a.emp).name.split(" ")[0]} — tashqarida ish tugatishni tasdiqlash (${uzDate(a.date)})`, go:"attendance" }));
   if (USER.role === "admin" || isExec(USER.role))
     EMPLOYEES.filter(e => e.contract && daysTo(e.contract) <= 30).forEach(e =>
       items.push({ ic:"📄", cls:"gold", text: daysTo(e.contract) < 0
@@ -1185,18 +1189,22 @@ function personalBlock(e){
   const otInfo = todayAtt && todayAtt.out && otMinutes(todayAtt) > 0
     ? `<span class="tag ${ {pending:"gold",approved:"success",rejected:"danger",none:"muted"}[todayAtt.ot||"none"] }">
         qo'shimcha ${otMinutes(todayAtt)} daq — ${ {pending:"tasdiq kutilmoqda",approved:"tasdiqlangan ✓",rejected:"rad etilgan",none:"hisoblanmagan"}[todayAtt.ot||"none"] }</span>` : "";
+  const fieldInfo = todayAtt ? [
+    todayAtt.inField ? `<span class="tag ${ {pending:"gold",approved:"success",rejected:"danger"}[todayAtt.inAppr]||"info" }">tashqaridan kelish — ${ {pending:"tasdiq kutilmoqda",approved:"tasdiqlangan ✓",rejected:"rad etilgan"}[todayAtt.inAppr]||"" }</span>` : "",
+    todayAtt.outField ? `<span class="tag ${ {pending:"gold",approved:"success",rejected:"danger"}[todayAtt.outAppr]||"info" }">tashqarida tugatish — ${ {pending:"tasdiq kutilmoqda",approved:"tasdiqlangan ✓",rejected:"rad etilgan"}[todayAtt.outAppr]||"" }</span>` : ""
+  ].join(" ") : "";
   const fieldToday = isFieldDay(e.id, TODAY)
     ? `<span class="tag info">Bugun tashqarida ishlashga ruxsat berilgan — istalgan joydan belgilaysiz</span>` : "";
   const checkBtn = !todayAtt
     ? `<button class="btn primary" onclick="checkIn()">${IC.clock} Keldim</button>`
     : (!todayAtt.out
       ? `<div class="check-state" style="color:var(--success)">Kelgan vaqt: <span class="num">${todayAtt.in}</span>${todayAtt.late?' <span class="tag danger">kechikish</span>':''} ${lunchInfo}</div>
+         ${fieldInfo}
          ${lunchBtn}
          <button class="btn ghost" onclick="checkOut()">${IC.out} Ketdim</button>
-         ${minutes(new Date().getHours()+":"+new Date().getMinutes()) ? "" : ""}
-         <span style="font-size:11px;color:var(--muted)">10 daqiqagacha erta kelish/kech ketish e'tiborga olinmaydi; undan ko'p qo'shimcha vaqt boshliq tasdig'i bilan hisoblanadi</span>`
+         <span style="font-size:11px;color:var(--muted)">Ishxonadan tashqarida bo'lsangiz, tugma joylashuvingizni yozib boshliq tasdig'iga yuboradi</span>`
       : `<div class="check-state">Bugun: <span class="num">${todayAtt.in} — ${todayAtt.out}</span> ${lunchInfo}</div>
-         <span class="tag success">Ish kuni yakunlangan</span> ${otInfo}`);
+         <span class="tag success">Ish kuni yakunlangan</span> ${otInfo} ${fieldInfo}`);
 
   return `
     <div class="card clock-card">
@@ -1532,6 +1540,17 @@ function pgAttendance(){
   const dates = [...new Set(recs.map(a => a.date))].sort((a,b) => b.localeCompare(a)).slice(0, 30);
   if (dates.length && ![...OPEN_ACC].some(k => k.startsWith("d:"))) OPEN_ACC.add("d:" + dates[0]);
 
+  const fieldTag = (fld, appr, emp, date, which) => {
+    if (!fld) return "";
+    if (appr === "pending" && canApproveOT({ emp })) {
+      return `<span class="tag gold">tashqarida?</span>
+        <button class="btn success sm" onclick="decideField('${emp}','${date}','${which}','approved')">✓</button>
+        <button class="btn ghost sm" onclick="decideField('${emp}','${date}','${which}','rejected')">✗</button>`;
+    }
+    const m = { pending:["gold","tashqarida · kutmoqda"], approved:["info","tashqarida ✓"], rejected:["danger","tashqarida · rad"], none:["info","tashqarida"] };
+    const [c,l] = m[appr] || m.none;
+    return `<span class="tag ${c}">${l}</span>`;
+  };
   const attRow = a => {
     const e = empById(a.emp);
     const otm = otMinutes(a);
@@ -1539,13 +1558,16 @@ function pgAttendance(){
       <div class="att-who">${avatarHtml(e,"sm")}<div><b>${esc(e.name)}</b><br><span class="sub2">${esc(e.pos)}</span></div></div>
       <div class="att-cells">
         <div><span class="sub2">KELDI</span><b class="num">${a.in}</b>
-          ${a.geo?`<a href="https://maps.google.com/?q=${a.geo}" target="_blank" rel="noopener" style="text-decoration:none">📍</a>`:""}
+          ${a.geo?`<a href="https://maps.google.com/?q=${a.geo}" target="_blank" rel="noopener" style="text-decoration:none" title="Kelgan joy">📍</a>`:""}
           ${a.late?'<span class="tag danger">kech</span>':'<span class="tag success">vaqtida</span>'}
-          ${isFieldDay(a.emp,a.date)?'<span class="tag info">tashqarida</span>':""}</div>
+          ${isFieldDay(a.emp,a.date)?'<span class="tag info">ruxsatli tashqarida</span>':""}
+          ${fieldTag(a.inField, a.inAppr, a.emp, a.date, "in")}</div>
         <div><span class="sub2">KETDI</span><b class="num">${a.out ?? "—"}</b>
+          ${a.outGeo?`<a href="https://maps.google.com/?q=${a.outGeo}" target="_blank" rel="noopener" style="text-decoration:none" title="Ishni tugatgan joy">📍</a>`:""}
           ${!a.out?'<span class="tag gold">ishda</span>':""}
           ${a.auto?'<span class="tag gold" title="18:00 bilan avto yopilgan">avto</span>':""}
-          ${a.lunchLate?'<span class="tag danger">obed kech</span>':""}</div>
+          ${a.lunchLate?'<span class="tag danger">obed kech</span>':""}
+          ${fieldTag(a.outField, a.outAppr, a.emp, a.date, "out")}</div>
         <div><span class="sub2">SOAT</span><b class="num">${a.out ? workedHours(a).toFixed(1) : "—"}</b></div>
         ${otm > 0 ? `<div><span class="sub2">QO'SHIMCHA</span>
           ${a.ot === "pending" && canApproveOT(a)
@@ -1700,10 +1722,22 @@ function getGeo(){
 async function geoGuard(){
   const g = await getGeo();
   if (!g) { toast("Joylashuv aniqlanmadi — brauzerda joylashuvga ruxsat berib, qayta urinib ko'ring"); return null; }
-  if (OFFICE && !USER.fieldWork && !isFieldDay(USER.id, TODAY)) {
+  g.outside = false; // ishxona radiusidan tashqaridami
+  if (OFFICE) {
     const d = Math.round(distMeters(g.lat, g.lng, OFFICE.lat, OFFICE.lng));
-    const allow = OFFICE.radius + Math.min(Math.round(g.acc || 0), 30); // GPS xatosiga kichik chegirma
-    if (d > allow) { toast(`Siz ishxonada emassiz — masofa ~${d} m (ruxsat ${OFFICE.radius} m)`); return null; }
+    const allow = OFFICE.radius + Math.min(Math.round(g.acc || 0), 30);
+    if (d > allow) {
+      // Tashqaridan belgilash huquqi: doimiy "ko'chada ishlaydi" (haydovchilar)
+      // yoki admin o'sha kunga bergan ruxsat. Aks holda — rad etiladi.
+      const allowedOutside = USER.fieldWork || isFieldDay(USER.id, TODAY);
+      if (!allowedOutside) {
+        toast(`Siz ishxonada emassiz — masofa ~${d} m (ruxsat ${OFFICE.radius} m). Tashqaridan belgilash huquqingiz yo'q.`);
+        return null;
+      }
+      // "Doimiy dala ishchisi" (haydovchi) — tashqarida deb belgilanib, tasdiqqa boradi.
+      // "Kunlik ruxsat" — admin oldindan ruxsat bergani uchun tasdiqsiz o'tadi.
+      if (USER.fieldWork && !isFieldDay(USER.id, TODAY)) { g.outside = true; g.dist = d; }
+    }
   }
   return g;
 }
@@ -1714,17 +1748,23 @@ async function checkIn(){
   const g = await geoGuard();
   if (!g) return;
   const late = minutes(t) > minutes(WORK_START);
+  const inField = !!g.outside;
+  const inAppr = inField ? "pending" : "none";
   const rec = { emp: USER.id, date: TODAY, in: t, out: null, late,
-                geo: g.lat.toFixed(5) + "," + g.lng.toFixed(5) };
+                geo: g.lat.toFixed(5) + "," + g.lng.toFixed(5),
+                inField, inAppr };
   if (CLOUD) {
     const { data, error } = await sb.from("attendance")
-      .insert({ emp: USER.id, date: TODAY, check_in: t, late, lat: g.lat, lng: g.lng })
+      .insert({ emp: USER.id, date: TODAY, check_in: t, late, lat: g.lat, lng: g.lng,
+                in_field: inField, in_appr: inAppr })
       .select().single();
     if (error) return toast("Xatolik: " + error.message);
     rec.id = data.id;
   }
   ATTENDANCE.push(rec);
-  toast("Kelish qayd etildi: " + t + " 📍");
+  toast(inField
+    ? `Tashqaridan kelish belgilandi (${t}) 📍 — boshliq tasdig'iga yuborildi`
+    : "Kelish qayd etildi: " + t + " 📍");
   render(); startClock();
 }
 /* Radiusni nuqtani o'zgartirmasdan saqlash (tanlov o'zgarganda avtomatik) */
@@ -1755,17 +1795,27 @@ async function checkOut(){
   const now = new Date();
   const t = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
   toast("Joylashuv aniqlanmoqda...");
-  if (!(await geoGuard())) return;
+  const g = await geoGuard();
+  if (!g) return;
+  const outField = !!g.outside;
+  const outAppr = outField ? "pending" : "none";
   const otAfter = otMinutes({ in: a.in, out: t });
   const otStatus = otAfter > 0 ? "pending" : "none";
   if (CLOUD) {
-    const { error } = await sb.from("attendance").update({ check_out: t, ot_status: otStatus }).eq("id", a.id);
+    const { error } = await sb.from("attendance").update({
+      check_out: t, ot_status: otStatus,
+      out_field: outField, out_appr: outAppr, out_lat: g.lat, out_lng: g.lng
+    }).eq("id", a.id);
     if (error) return toast("Xatolik: " + error.message);
   }
   a.out = t; a.ot = otStatus;
-  toast(otAfter > 0
-    ? `Ketish qayd etildi: ${t}. Qo'shimcha ${otAfter} daqiqa boshliq tasdig'iga yuborildi`
-    : "Ketish vaqti qayd etildi: " + t);
+  a.outField = outField; a.outAppr = outAppr;
+  a.outGeo = g.lat.toFixed(5) + "," + g.lng.toFixed(5);
+  toast(outField
+    ? `Tashqarida ish tugatildi (${t}) 📍 — boshliq tasdig'iga yuborildi`
+    : (otAfter > 0
+      ? `Ketish qayd etildi: ${t}. Qo'shimcha ${otAfter} daqiqa boshliq tasdig'iga yuborildi`
+      : "Ketish vaqti qayd etildi: " + t));
   render(); startClock();
 }
 
@@ -1803,6 +1853,22 @@ async function decideOT(emp, date, status){
   }
   a.ot = status;
   toast(status === "approved" ? "Qo'shimcha vaqt tasdiqlandi — hisobga qo'shildi" : "Qo'shimcha vaqt rad etildi");
+  render();
+}
+
+/* Tashqaridan belgilangan kelish (in) yoki ketish (out)ni tasdiqlash/rad etish */
+async function decideField(emp, date, which, status){
+  const a = ATTENDANCE.find(x => String(x.emp) === String(emp) && x.date === date);
+  if (!a) return;
+  const col = which === "in" ? "in_appr" : "out_appr";
+  if (CLOUD) {
+    const { error } = await sb.from("attendance").update({ [col]: status }).eq("id", a.id);
+    if (error) return toast("Xatolik: " + error.message);
+  }
+  if (which === "in") a.inAppr = status; else a.outAppr = status;
+  toast(status === "approved"
+    ? `Tashqaridan ${which === "in" ? "kelish" : "ketish"} tasdiqlandi ✓`
+    : `Tashqaridan ${which === "in" ? "kelish" : "ketish"} rad etildi`);
   render();
 }
 
@@ -1951,7 +2017,7 @@ function openEmpModal(id){
     <input id="eContract" type="date" value="${e?.contract||""}">
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:14px">
       <input type="checkbox" id="eField" style="width:auto" ${e?.fieldWork?"checked":""}>
-      DOIMIY ko'chada ishlaydi — geofence hech qachon so'ralmasin (bir kunlik ruxsat Davomat sahifasida beriladi)</label>
+      Doimiy tashqarida ishlaydi (masalan, haydovchi) — ishxonadan tashqaridan "Keldim/Ketdim" bosa oladi, boshliq tasdiqlaydi</label>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div><label>Login (qisqa, masalan: jasur)</label><input id="eLogin" value="${e?esc(e.login||""):""}" placeholder="jasur" ${CLOUD&&e?"disabled":""}></div>
       <div><label>Parol</label><input id="ePass" type="${CLOUD?"password":"text"}" value="${!CLOUD&&e?esc(e.pass||""):""}" placeholder="parol" ${CLOUD&&e?"disabled":""}></div>
@@ -2044,6 +2110,8 @@ async function loadAll(){
     in: (a.check_in || "").slice(0,5), out: a.check_out ? a.check_out.slice(0,5) : null,
     late: a.late, ot: a.ot_status || "none",
     lunchBack: a.lunch_back ? a.lunch_back.slice(0,5) : null, lunchLate: !!a.lunch_late,
+    inField: !!a.in_field, outField: !!a.out_field, inAppr: a.in_appr || "none", outAppr: a.out_appr || "none",
+    outGeo: (a.out_lat != null && a.out_lng != null) ? a.out_lat.toFixed(5) + "," + a.out_lng.toFixed(5) : null,
     geo: (a.lat != null && a.lng != null) ? a.lat.toFixed(5) + "," + a.lng.toFixed(5) : null }));
   normalizeAttendance();
 }
