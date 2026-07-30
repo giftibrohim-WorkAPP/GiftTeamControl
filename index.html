@@ -1622,6 +1622,7 @@ function pgAttendance(){
       <span class="tag muted">Ish vaqti: 9:00–18:00 · obed 13:00–14:00 · reja 26 kun × 8 soat</span>
       ${USER.role!=="xodim" ? '<button class="btn ghost sm" onclick="exportAttendance()">⬇ Excel (CSV)</button>' : ""}
       ${isAdmin ? '<button class="btn ghost sm" onclick="openAttModal()">+ Yozuv qo\'shish</button>' : ""}
+      ${CLOUD ? '<button class="btn ghost sm" onclick="refreshNow()">🔄 Yangilash</button>' : ""}
     </div>
     ${days || '<div class="card empty">Davomat yozuvlari yo\'q</div>'}`;
 }
@@ -2145,21 +2146,31 @@ async function doLogin(){
   $("#loginUser").value = ""; $("#loginPass").value = "";
 }
 
+async function refreshNow(){
+  if (window.__rtRefresh) { await window.__rtRefresh(); toast("Yangilandi ✓"); }
+}
 function subscribeRealtime(){
   if (!CLOUD || window.__rt) return;
+  const refresh = async () => {
+    if (!USER) return;
+    await loadAll();
+    const me = EMPLOYEES.find(e => String(e.id) === String(USER.id));
+    if (me) USER = me;
+    render();
+    if (window.__taskOpen && document.getElementById("cmList")) loadComments(window.__taskOpen);
+  };
+  window.__rtRefresh = refresh;
   window.__rt = sb.channel("gm-live")
     .on("postgres_changes", { event: "*", schema: "public" }, () => {
       clearTimeout(window.__rtT);
-      window.__rtT = setTimeout(async () => {
-        if (!USER) return;
-        await loadAll();
-        const me = EMPLOYEES.find(e => String(e.id) === String(USER.id));
-        if (me) USER = me;
-        render();
-        if (window.__taskOpen && document.getElementById("cmList")) loadComments(window.__taskOpen);
-      }, 500);
+      window.__rtT = setTimeout(refresh, 400);
     })
     .subscribe();
+  // Zaxira: ilova ochiq turганда har 25 soniyada jimgina yangilash (Realtime uzilib qolsa ham)
+  clearInterval(window.__poll);
+  window.__poll = setInterval(() => { if (USER && !document.hidden) refresh(); }, 25000);
+  // Ekranga qaytganda darhol yangilash (telefon uyquda turgandan keyin)
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && USER) refresh(); });
 }
 function enterApp(u){
   USER = u;
