@@ -560,6 +560,7 @@ function toast(msg){
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2400);
 }
 function avatarHtml(e, cls=""){
+  if (!e) return `<div class="avatar ${cls}" style="background:#8DA2B5">?</div>`;
   return `<div class="avatar ${cls}" style="background:${e.color}">${initials(e.name)}</div>`;
 }
 // Rahbariyat darajasi: rahbar va direktor bir xil to'liq huquqqa ega
@@ -748,10 +749,11 @@ const IC = {
 function notifList(){
   const items = [], seen = new Set();
   const ids = scopeEmployees().map(e => String(e.id));
-  if (USER.role === "boshliq" || USER.role === "admin" || isExec(USER.role))
-    TASKS.filter(t => t.status==="review" && ids.includes(String(t.emp)) && String(t.emp) !== String(USER.id)).forEach(t => {
+  // Vazifani BERGAN odamga (yoki admin) tasdiq so'rovi keladi
+  TASKS.filter(t => t.status==="review" && String(t.emp) !== String(USER.id)
+      && (String(t.by) === String(USER.id) || USER.role === "admin")).forEach(t => {
       seen.add(t.id);
-      items.push({ ic:"✅", cls:"info", text:`«${t.title}» tasdiq kutmoqda — ${empById(t.emp).name.split(" ")[0]}`, go:"tasks" });
+      items.push({ ic:"✅", cls:"info", text:`«${t.title}» tasdiq kutmoqda — ${empById(t.emp)?.name.split(" ")[0]||""}`, go:"tasks" });
     });
   TASKS.filter(t => t.emp === USER.id && t.status === "new").forEach(t => {
     seen.add(t.id);
@@ -1292,16 +1294,21 @@ const KCOLS = [
   { id:"done",     title:"Bajarildi",         color:"var(--success)" },
 ];
 function taskScope(){
-  const ids = scopeEmployees().map(e=>e.id);
-  return TASKS.filter(t => ids.includes(t.emp) || t.emp === USER.id);
+  const ids = scopeEmployees().map(e => String(e.id));
+  return TASKS.filter(t =>
+    ids.includes(String(t.emp))               // ko'rish doirasidagi xodim vazifasi
+    || String(t.emp) === String(USER.id)      // o'ziga berilgan
+    || String(t.by) === String(USER.id)       // o'zi bergan (kim bo'lishidan qat'i nazar)
+  );
 }
 function taskActions(t){
   const emp = empById(t.emp);
-  const isOwner = String(t.emp) === String(USER.id);
+  const isOwner = String(t.emp) === String(USER.id);       // bajaruvchi
+  const isGiver = t.by && String(t.by) === String(USER.id); // vazifani bergan
   const isAdmin = USER.role === "admin";
-  const isExecutive = isExec(USER.role); // rahbar, direktor — hammani tasdiqlaydi
-  const isHead  = USER.role === "boshliq" && String(emp?.dept) === String(USER.dept) && !isOwner;
-  const canApprove = isAdmin || isExecutive || isHead; // vazifani tasdiqlaydiganlar
+  // Vazifani BERGAN odam tasdiqlaydi. Boshliq o'z bo'limi xodimiga bergan bo'lsa ham shu.
+  // Admin har doim tasdiqlay oladi (nazorat uchun).
+  const canApprove = (isGiver || isAdmin) && !isOwner;
   let btns = [];
   if (t.status === "new" && (isOwner || isAdmin))
     btns.push(`<button class="btn primary sm" onclick="moveTask('${t.id}','progress')">Boshlash</button>`);
@@ -1328,7 +1335,7 @@ function pgTasks(){
             <div class="ttl">${t.rep && t.rep!=="none" ? `<span title="Takrorlanadi: ${repLabel(t.rep)}">🔁</span> ` : ""}${esc(t.title)} ${(t.voice||t.voiceUrl)?"🎙":""}</div>
             <div class="desc">${esc(t.desc).slice(0,90)}${(t.desc||"").length>90?"…":""}</div>
           </div>
-          <div class="foot">${avatarHtml(e,"sm")} <span>${esc(e.name.split(" ")[0])}</span>
+          <div class="foot">${avatarHtml(e,"sm")} <span>${esc(e?.name.split(" ")[0] || "—")}</span>
             <span class="due num ${late?"late":""}">${late?"⚠ ":""}${uzDate(t.due)}</span></div>
           ${taskActions(t)}
         </div>`;
@@ -1946,7 +1953,13 @@ async function saveFB(){
 
 function openTaskModal(){
   voiceBlob = null;
-  const assignable = scopeEmployees().filter(e => !isExec(e.role));
+  // Rahbar/direktor/admin — o'zidan boshqa hammaga; boshliq — o'z bo'limiga
+  let assignable;
+  if (USER.role === "admin" || isExec(USER.role)) {
+    assignable = EMPLOYEES.filter(e => String(e.id) !== String(USER.id) && e.role !== "admin");
+  } else {
+    assignable = scopeEmployees().filter(e => !isExec(e.role) && String(e.id) !== String(USER.id));
+  }
   openModal(`
     <h3>Yangi vazifa</h3><div class="sub">Vazifa «Vazifa tushdi» bosqichiga tushadi</div>
     <label>Xodim</label><select id="tEmp">${assignable.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join("")}</select>
