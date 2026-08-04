@@ -1496,15 +1496,19 @@ function openTaskView(id){
 async function moveTask(id, status, returned=false){
   closeModal();
   const t = TASKS.find(x => String(x.id) === String(id));
-  if (CLOUD) {
-    const { error } = await sb.from("tasks").update({ status }).eq("id", t.id);
-    if (error) return toast("Xatolik: " + error.message);
-  }
-  t.status = status;
-  if (status === "review") toast("Vazifa bo'lim boshlig'iga tasdiqqa yuborildi");
-  else if (returned) toast("Vazifa qayta ishlashga qaytarildi");
-  else toast("Vazifa jarayonga o'tdi");
+  if (!t) return;
+  const prev = t.status;
+  t.status = status; // darhol mahalliy
   render();
+  await guardWrite(async () => {
+    if (CLOUD) {
+      const { error } = await sb.from("tasks").update({ status }).eq("id", t.id);
+      if (error) { t.status = prev; render(); return toast("Xatolik: " + error.message); }
+    }
+    if (status === "review") toast("Vazifa tasdiqqa yuborildi");
+    else if (returned) toast("Vazifa qayta ishlashga qaytarildi");
+    else toast("Vazifa jarayonga o'tdi");
+  });
 }
 const WD_SHORT = ["Yak","Du","Se","Chor","Pay","Ju","Sha"];
 function repLabel(r){
@@ -1602,26 +1606,28 @@ async function approveTask(id){
   closeModal();
   const t = TASKS.find(x => String(x.id) === String(id));
   if (!t) return;
-  if (t.status === "done") { toast("Bu vazifa allaqachon tasdiqlangan"); return; } // qayta tasdiqlashni bloklash
-  t.status = "done"; t.doneAt = TODAY; // darhol mahalliy holat (Realtime kutmasdan)
-  if (CLOUD) {
-    const { error } = await sb.from("tasks").update({ status: "done", done_at: TODAY }).eq("id", t.id);
-    if (error) { t.status = "review"; t.doneAt = null; return toast("Xatolik: " + error.message); }
-  }
-  // Takrorlanuvchi vazifa: keyingi nusxasi avtomatik ochiladi
-  if (t.rep && t.rep !== "none") {
-    const due2 = nextDue(t.due, t.rep);
+  if (t.status === "done") { toast("Bu vazifa allaqachon tasdiqlangan"); return; }
+  t.status = "done"; t.doneAt = TODAY; // darhol mahalliy holat
+  render(); // ekranni darhol yangilaymiz
+  await guardWrite(async () => {
     if (CLOUD) {
-      const { data } = await sb.from("tasks")
-        .insert({ title: t.title, descr: t.desc, emp: t.emp, emps: t.emps || null, created_by: t.by, due: due2, status: "new", repeat: t.rep })
-        .select().single();
-      if (data) TASKS.push({ id: data.id, title: t.title, desc: t.desc, emp: t.emp, emps: t.emps, by: t.by, due: due2, status: "new", rep: t.rep });
-    } else {
-      TASKS.push({ id: Date.now(), title: t.title, desc: t.desc, emp: t.emp, emps: t.emps, by: t.by, due: due2, status: "new", rep: t.rep });
+      const { error } = await sb.from("tasks").update({ status: "done", done_at: TODAY }).eq("id", t.id);
+      if (error) { t.status = "review"; t.doneAt = null; render(); return toast("Xatolik: " + error.message); }
     }
-    toast(`Tasdiqlandi ✓ Takroriy vazifa ${uzDate(due2)} muddat bilan qayta ochildi 🔁`);
-  } else toast("Vazifa tasdiqlandi — Bajarildi ✓");
-  render();
+    if (t.rep && t.rep !== "none") {
+      const due2 = nextDue(t.due, t.rep);
+      if (CLOUD) {
+        const { data } = await sb.from("tasks")
+          .insert({ title: t.title, descr: t.desc, emp: t.emp, emps: t.emps || null, created_by: t.by, due: due2, status: "new", repeat: t.rep })
+          .select().single();
+        if (data) TASKS.push({ id: data.id, title: t.title, desc: t.desc, emp: t.emp, emps: t.emps, by: t.by, due: due2, status: "new", rep: t.rep });
+      } else {
+        TASKS.push({ id: Date.now(), title: t.title, desc: t.desc, emp: t.emp, emps: t.emps, by: t.by, due: due2, status: "new", rep: t.rep });
+      }
+      toast(`Tasdiqlandi ✓ Takroriy vazifa ${uzDate(due2)} muddat bilan qayta ochildi 🔁`);
+    } else toast("Vazifa tasdiqlandi — Bajarildi ✓");
+    render();
+  });
 }
 
 /* ---------- 5. DAVOMAT ---------- */
@@ -2291,6 +2297,7 @@ function subscribeRealtime(){
   if (!CLOUD || window.__rt) return;
   const refresh = async () => {
     if (!USER) return;
+    if (window.__writing) return; // yozish amali ketayotganda yangilamaymiz (poyga holatini oldini oladi)
     await loadAll();
     const me = EMPLOYEES.find(e => String(e.id) === String(USER.id));
     if (me) USER = me;
@@ -2304,11 +2311,16 @@ function subscribeRealtime(){
       window.__rtT = setTimeout(refresh, 400);
     })
     .subscribe();
-  // Zaxira: ilova ochiq turганда har 25 soniyada jimgina yangilash (Realtime uzilib qolsa ham)
   clearInterval(window.__poll);
   window.__poll = setInterval(() => { if (USER && !document.hidden) refresh(); }, 25000);
-  // Ekranga qaytganda darhol yangilash (telefon uyquda turgandan keyin)
   document.addEventListener("visibilitychange", () => { if (!document.hidden && USER) refresh(); });
+}
+/* Yozish amalini o'rab, shu davrda Realtime yangilashini to'xtatadi.
+   Yozish tugagach, mahalliy o'zgarish bazaga aniq yetib borishi uchun qisqa muhlat qoldiradi. */
+async function guardWrite(fn){
+  window.__writing = true;
+  try { return await fn(); }
+  finally { setTimeout(() => { window.__writing = false; }, 1500); }
 }
 function enterApp(u){
   USER = u;
