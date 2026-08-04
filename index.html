@@ -1504,8 +1504,12 @@ async function moveTask(id, status, returned=false){
   render();
   await guardWrite(async () => {
     if (CLOUD) {
-      const { error } = await sb.from("tasks").update({ status }).eq("id", t.id);
+      const { data, error } = await sb.from("tasks").update({ status }).eq("id", t.id).select();
       if (error) { t.status = prev; render(); return toast("Xatolik: " + error.message); }
+      if (!data || !data.length) {
+        t.status = prev; delete window.__pendingTask[String(t.id)]; render();
+        return toast("Ruxsat yo'q: bazada bu amal uchun huquq berilmagan (supabase-update-9.sql).");
+      }
     }
     if (status === "review") toast("Vazifa tasdiqqa yuborildi");
     else if (returned) toast("Vazifa qayta ishlashga qaytarildi");
@@ -1615,8 +1619,16 @@ async function approveTask(id){
   render(); // ekranni darhol yangilaymiz
   await guardWrite(async () => {
     if (CLOUD) {
-      const { error } = await sb.from("tasks").update({ status: "done", done_at: TODAY }).eq("id", t.id);
+      const { data, error } = await sb.from("tasks")
+        .update({ status: "done", done_at: TODAY }).eq("id", t.id).select();
       if (error) { t.status = "review"; t.doneAt = null; render(); return toast("Xatolik: " + error.message); }
+      // RLS jimgina rad etsa — 0 qator qaytadi. Buni aniq aytamiz.
+      if (!data || !data.length) {
+        t.status = "review"; t.doneAt = null;
+        delete window.__pendingTask[String(t.id)];
+        render();
+        return toast("Ruxsat yo'q: bazada tasdiqlash huquqi berilmagan. supabase-update-9.sql ni Supabase'da Run qiling.");
+      }
     }
     if (t.rep && t.rep !== "none") {
       const due2 = nextDue(t.due, t.rep);
