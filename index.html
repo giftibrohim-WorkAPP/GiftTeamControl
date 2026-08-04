@@ -1499,6 +1499,8 @@ async function moveTask(id, status, returned=false){
   if (!t) return;
   const prev = t.status;
   t.status = status; // darhol mahalliy
+  window.__pendingTask = window.__pendingTask || {};
+  window.__pendingTask[String(t.id)] = { status, at: Date.now() };
   render();
   await guardWrite(async () => {
     if (CLOUD) {
@@ -1608,6 +1610,8 @@ async function approveTask(id){
   if (!t) return;
   if (t.status === "done") { toast("Bu vazifa allaqachon tasdiqlangan"); return; }
   t.status = "done"; t.doneAt = TODAY; // darhol mahalliy holat
+  window.__pendingTask = window.__pendingTask || {};
+  window.__pendingTask[String(t.id)] = { status: "done", at: Date.now() }; // loadAll orqaga qaytarmasin
   render(); // ekranni darhol yangilaymiz
   await guardWrite(async () => {
     if (CLOUD) {
@@ -2254,9 +2258,16 @@ async function loadAll(){
   EMPLOYEES = (pr.data || []).map(p => ({ id: p.id, name: p.name, role: p.role, dept: p.dept,
     pos: p.pos, salary: +p.salary, color: p.color, login: toShort(p.email),
     contract: p.contract_until, fieldWork: !!p.field_work, canReassign: !!p.can_reassign }));
-  TASKS = (tk.data || []).map(t => ({ id: t.id, title: t.title, desc: t.descr, emp: t.emp,
-    emps: t.emps || null, by: t.created_by, due: t.due, status: t.status, doneAt: t.done_at,
-    rep: t.repeat || "none", voice: t.voice, extended: !!t.extended, duePrev: t.due_prev }));
+  TASKS = (tk.data || []).map(t => {
+    const nt = { id: t.id, title: t.title, desc: t.descr, emp: t.emp,
+      emps: t.emps || null, by: t.created_by, due: t.due, status: t.status, doneAt: t.done_at,
+      rep: t.repeat || "none", voice: t.voice, extended: !!t.extended, duePrev: t.due_prev };
+    // Yaqinda mahalliy o'zgartirilgan vazifa (masalan hozirgina tasdiqlangan):
+    // bazadan hali eski holat kelsa, mahalliy holatni saqlab qolamiz (orqaga qaytmasin).
+    const p = window.__pendingTask && window.__pendingTask[String(t.id)];
+    if (p && Date.now() - p.at < 12000) { nt.status = p.status; if (p.status === "done") nt.doneAt = nt.doneAt || TODAY; }
+    return nt;
+  });
   FINEBONUS = (fb.data || []).map(f => ({ id: f.id, emp: f.emp, type: f.type,
     amount: +f.amount, reason: f.reason, date: f.date }));
   ATTENDANCE = (at.data || []).map(a => ({ id: a.id, emp: a.emp, date: a.date,
