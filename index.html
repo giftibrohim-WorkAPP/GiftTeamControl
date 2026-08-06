@@ -555,6 +555,25 @@ function distMeters(la1, lo1, la2, lo2){
 }
 /* Shartnoma: tugashiga necha kun qolgani */
 const daysTo = iso => Math.round((new Date(iso) - new Date(TODAY)) / 86400000);
+/* Shartnoma holati:
+   qizil  — muddati o'tgan yoki 30 kungacha qolgan
+   sariq  — 1 oydan 3 oygacha (31–90 kun)
+   ko'k   — 3 oydan 6 oygacha (91–180 kun)
+   yashil — 6 oydan ko'p (180+ kun) */
+function contractState(iso){
+  if (!iso) return { cls:"muted", txt:"sana kiritilmagan", label:"—", d:null };
+  const d = daysTo(iso);
+  if (d < 0)    return { cls:"danger",  txt:`muddati o'tgan (${uzDate(iso)}, ${Math.abs(d)} kun oldin)`, label:"O'tgan", d };
+  if (d <= 30)  return { cls:"danger",  txt:`${d} kun qoldi — ${uzDate(iso)}`, label:`${d} kun`, d };
+  if (d <= 90)  return { cls:"gold",    txt:`${d} kun qoldi (${Math.round(d/30)} oy) — ${uzDate(iso)}`, label:`${d} kun`, d };
+  if (d <= 180) return { cls:"info",    txt:`${Math.round(d/30)} oy qoldi — ${uzDate(iso)}`, label:`${Math.round(d/30)} oy`, d };
+  return             { cls:"success", txt:`amalda — ${uzDate(iso)} gacha (${Math.round(d/30)} oy)`, label:`${Math.round(d/30)} oy`, d };
+}
+function contractTag(iso, short=false){
+  const s = contractState(iso);
+  if (!iso) return `<span class="tag muted">📄 shartnoma sanasi yo'q</span>`;
+  return `<span class="tag ${s.cls}" title="Shartnoma: ${uzDate(iso)}">📄 ${short ? s.label : s.txt}</span>`;
+}
 /* "Ketdim" unutilgan o'tgan kunlarni 18:00 bilan avto-yopish */
 function normalizeAttendance(){
   ATTENDANCE.forEach(a => { if (!a.out && a.date < TODAY) { a.out = "18:00"; a.auto = true; } });
@@ -591,6 +610,27 @@ function otMinutes(a){
   return (early > OT_GRACE ? early : 0) + (lateOut > OT_GRACE ? lateOut : 0);
 }
 const LUNCH_MAX = 60; // belgilangan obed: 60 daqiqa (13:00–14:00)
+let FINE_PER_MIN = 0; // 1 daqiqa kechikish uchun jarima (admin belgilaydi)
+/* Kechikkan daqiqalar (kelish). Ruxsat bilan kechirilgan bo'lsa — 0 */
+function lateMinutes(a){
+  if (!a || a.lateExcused) return 0;
+  return Math.max(0, minutes(a.in) - minutes(WORK_START));
+}
+/* Obeddan kech qaytish daqiqalari (1 soatdan ortig'i). Kechirilgan bo'lsa — 0 */
+function lunchLateMinutes(a){
+  if (!a || a.lunchExcused || !a.lunchOut || !a.lunchBack) return 0;
+  const inWindow = minutes(a.lunchOut) >= minutes(LUNCH_WINDOW_START) && minutes(a.lunchOut) <= minutes(LUNCH_WINDOW_END);
+  if (!inWindow) return 0;
+  return Math.max(0, (minutes(a.lunchBack) - minutes(a.lunchOut)) - LUNCH_MAX);
+}
+/* Kechikish uchun avtomatik jarima (1 daqiqa narxi × kechikkan daqiqalar) */
+function lateFine(a){
+  if (!FINE_PER_MIN) return 0;
+  return Math.round((lateMinutes(a) + lunchLateMinutes(a)) * FINE_PER_MIN);
+}
+/* Reytingga ta'sir qiladigan kechikish (kechirilgan hisobga olinmaydi) */
+function countsLate(a){ return lateMinutes(a) > 0; }
+function countsLunchLate(a){ return lunchLateMinutes(a) > 0; }
 /* Ishlagan soat: obed vaqti ayriladi; qo'shimcha vaqt FAQAT tasdiqlansa qo'shiladi.
    Obed: agar xodim "chiqdim/qaytdim" bosgan bo'lsa — HAQIQIY tafovut hisoblanadi,
    1 soatdan oshsa ortig'i ham ayriladi. Bosmagan bo'lsa — standart 1 soat ayriladi. */
@@ -617,15 +657,20 @@ function sumFB(id, type){
 // hisoblangan = soatlik × real ishlagan soat (ortiqcha soat qo'shiladi, kam ishlagani ayriladi)
 function earnedToDate(e){
   const att = empAttendance(e.id);
-  let hours = 0, days = 0;
-  att.forEach(a => { const h = workedHours(a); if (h !== null) { hours += h; days++; } });
+  let hours = 0, days = 0, lateFineSum = 0;
+  att.forEach(a => {
+    const h = workedHours(a); if (h !== null) { hours += h; days++; }
+    lateFineSum += lateFine(a); // kechikish uchun avtomatik jarima
+  });
   const hourRate = e.salary / PLAN_TOTAL;
   const base = hourRate * hours;
-  const planSoFar = days * PLAN_HOURS;        // shu kungacha reja soat
-  const diff = hours - planSoFar;             // + ortiqcha / − kam ishlangan
+  const planSoFar = days * PLAN_HOURS;
+  const diff = hours - planSoFar;
+  const manualFine = sumFB(e.id,"fine");
+  const fine = manualFine + lateFineSum;
   return { base, hours, days, hourRate, planSoFar, diff,
-           bonus: sumFB(e.id,"bonus"), fine: sumFB(e.id,"fine"),
-           total: base + sumFB(e.id,"bonus") - sumFB(e.id,"fine") };
+           bonus: sumFB(e.id,"bonus"), fine, manualFine, lateFine: lateFineSum,
+           total: base + sumFB(e.id,"bonus") - fine };
 }
 // Samaradorlik: 60% bajarilgan vazifalar + 20% muddatida topshirish + 20% o'z vaqtida kelish
 // effDetail — KPI nimadan yig'ilganining to'liq raqamlari
@@ -634,7 +679,7 @@ function effDetail(id){
   const done = t.filter(x => x.status === "done");
   const onTime = done.filter(x => !x.doneAt || x.doneAt <= x.due);
   const at = empAttendance(id);
-  const punct = at.filter(a => !a.late && !a.lunchLate);
+  const punct = at.filter(a => !countsLate(a) && !countsLunchLate(a));
   const tScore = t.length ? done.length / t.length : 0;
   const oScore = done.length ? onTime.length / done.length : 0;
   const pScore = at.length ? punct.length / at.length : 0;
@@ -774,6 +819,8 @@ function notifList(){
     .forEach(t => items.push({ ic:"⚠️", cls:"danger", text:`Muddati o'tdi: «${t.title}» — ${empById(t.emp).name.split(" ")[0]}`, go:"tasks" }));
   ATTENDANCE.filter(a => a.ot === "pending" && canApproveOT(a) && ids.includes(String(a.emp))).forEach(a =>
     items.push({ ic:"⏱", cls:"gold", text:`${empById(a.emp).name.split(" ")[0]} — qo'shimcha ${otMinutes(a)} daqiqa tasdiq kutmoqda (${uzDate(a.date)})`, go:"attendance" }));
+  ATTENDANCE.filter(a => a.excuseReq === "pending" && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
+    items.push({ ic:"📝", cls:"gold", text:`${empById(a.emp)?.name.split(" ")[0]} — kechikish sababi tasdiqlanishini kutmoqda (${uzDate(a.date)})`, go:"attendance" }));
   ATTENDANCE.filter(a => a.inField && a.inAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
     items.push({ ic:"🚶", cls:"info", text:`${empById(a.emp).name.split(" ")[0]} — tashqaridan kelishni tasdiqlash (${uzDate(a.date)})`, go:"attendance" }));
   ATTENDANCE.filter(a => a.outField && a.outAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
@@ -899,24 +946,20 @@ function pgProfile(){
   const att = empAttendance(e.id).slice(-10).reverse();
   const stLbl = { new:"Tushdi", progress:"Jarayonda", review:"Tasdiq kutmoqda", done:"Bajarildi" };
   const stCls = { new:"info", progress:"gold", review:"danger", done:"success" };
-  let contractHtml = `<span class="tag muted">Shartnoma sanasi kiritilmagan</span>`;
-  if (e.contract) {
-    const dt = daysTo(e.contract);
-    contractHtml = dt < 0 ? `<span class="tag danger">Shartnoma muddati o'tgan (${uzDate(e.contract)})</span>`
-      : dt <= 30 ? `<span class="tag gold">Shartnoma tugashiga ${dt} kun (${uzDate(e.contract)})</span>`
-      : `<span class="tag success">Shartnoma ${uzDate(e.contract)} gacha</span>`;
-  }
+  const contractHtml = contractTag(e.contract);
   const adminBtns = USER.role === "admin"
     ? `<button class="btn ghost sm" onclick="openEmpModal('${e.id}')">Tahrirlash</button>
        <button class="btn ghost sm" onclick="openFBModal('${e.id}')">Jarima/Bonus</button>` : "";
   const docsCard = `
-    <h3 class="section-title">📄 Hujjatlar (PDF) <span>faqat admin va rahbarga ko'rinadi</span></h3>
+    <h3 class="section-title">📄 Hujjatlar (PDF) <span>rahbariyat va xodimning o'ziga ko'rinadi</span></h3>
     <div class="card">
       ${CLOUD ? `<div id="docsList"><div class="empty">Yuklanmoqda...</div></div>
-        ${USER.role === "admin" ? `<div style="padding:12px 16px;border-top:1px solid var(--line)">
-          <label class="btn ghost sm" style="cursor:pointer">📤 PDF yuklash
-            <input type="file" accept="application/pdf,.pdf,.jpg,.png" style="display:none" onchange="uploadDoc('${e.id}', this)"></label>
-          <span style="font-size:11.5px;color:var(--muted);margin-left:8px">pasport, shartnoma, diplom...</span></div>` : ""}`
+        ${USER.role === "admin" ? `<div style="padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+          <select id="docTypeSel" style="width:auto;min-width:180px"><option value="">Hujjat turi (ixtiyoriy)</option>
+            ${DOC_TYPES.map(d=>`<option value="${d.id}">${esc(d.name)}${d.required?" *":""}</option>`).join("")}</select>
+          <label class="btn ghost sm" style="cursor:pointer">📤 Fayl yuklash
+            <input type="file" accept="application/pdf,.pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc('${e.id}', this)"></label>
+          <span style="font-size:11.5px;color:var(--muted)">PDF yoki rasm, 10 MB gacha</span></div>` : ""}`
       : `<div class="empty">Hujjatlar bo'limi Supabase ulanganda ishlaydi (demo rejimda mavjud emas)</div>`}
     </div>`;
   // Pul ko'rsatkichlari: admin/rahbar har kimni; boshliq esa FAQAT o'zini ko'radi
@@ -965,30 +1008,91 @@ function pgProfile(){
 const _origRender = render;
 render = function(){ _origRender();
   if (PAGE === "profile" && CLOUD) loadDocs(PROFILE_ID);
+  if (PAGE === "me" && CLOUD) loadDocs(USER.id);
   if (PAGE === "rating" && CLOUD) loadRating();
 };
 
 /* --- Hujjatlar (Supabase Storage) --- */
+let DOC_TYPES = [], EMP_DOCS = [];
+async function loadDocTypes(){
+  if (!CLOUD) return;
+  const [dt, ed] = await Promise.all([
+    sb.from("doc_types").select("*").order("sort"),
+    sb.from("emp_docs").select("*"),
+  ]);
+  if (dt.data) DOC_TYPES = dt.data.map(d => ({ id: d.id, name: d.name, required: d.required, sort: d.sort }));
+  if (ed.data) EMP_DOCS = ed.data.map(d => ({ emp: d.emp, type: d.doc_type, file: d.file }));
+}
+/* Xodimda qaysi majburiy hujjatlar bor / yetishmayapti */
+function docStatus(empId){
+  const req = DOC_TYPES.filter(d => d.required);
+  const mine = EMP_DOCS.filter(d => String(d.emp) === String(empId));
+  const have = req.filter(r => mine.some(m => String(m.type) === String(r.id)));
+  const missing = req.filter(r => !mine.some(m => String(m.type) === String(r.id)));
+  return { total: req.length, have: have.length, missing, ok: req.length > 0 && missing.length === 0 };
+}
 async function loadDocs(empId){
   const el = document.getElementById("docsList"); if (!el) return;
+  await loadDocTypes();
   const { data, error } = await sb.storage.from("docs").list(String(empId), { sortBy: { column: "name" } });
   if (error) { el.innerHTML = `<div class="empty">Xatolik: ${esc(error.message)}</div>`; return; }
-  el.innerHTML = (data && data.length) ? data.map(f => `
-    <div class="fb-item"><div class="fb-icon" style="background:var(--info-soft);color:var(--info)">📄</div>
-      <div class="meta"><b>${esc(f.name)}</b><span>${f.metadata ? Math.max(1, Math.round(f.metadata.size/1024)) + " KB" : ""}</span></div>
+  const files = (data || []).filter(f => f.name !== ".emptyFolderPlaceholder");
+  const st = docStatus(empId);
+  const typeOf = fname => {
+    const rec = EMP_DOCS.find(d => String(d.emp) === String(empId) && d.file === fname);
+    const t = rec && DOC_TYPES.find(x => String(x.id) === String(rec.type));
+    return t ? t.name : null;
+  };
+  const checklist = DOC_TYPES.length ? `
+    <div style="margin-bottom:11px;padding:10px 12px;border-radius:12px;background:var(--surface2)">
+      <b style="font-size:12.5px">Hujjatlar to'liqligi: ${st.have}/${st.total}
+        ${st.ok ? `<span class="tag success">to'liq ✓</span>` : `<span class="tag danger">${st.missing.length} ta yetishmaydi</span>`}</b>
+      ${st.missing.length ? `<div style="font-size:12px;color:var(--muted);margin-top:5px">Yetishmayapti: ${st.missing.map(m=>esc(m.name)).join(", ")}</div>` : ""}
+    </div>` : "";
+  el.innerHTML = checklist + (files.length ? files.map(f => {
+    const tn = typeOf(f.name);
+    return `<div class="fb-item"><div class="fb-icon" style="background:var(--info-soft);color:var(--info)">📄</div>
+      <div class="meta"><b>${tn ? esc(tn) : esc(f.name)}</b><span>${tn ? esc(f.name) + " · " : ""}${f.metadata ? Math.max(1, Math.round(f.metadata.size/1024)) + " KB" : ""}</span></div>
       <button class="btn ghost sm" data-e="${empId}" data-n="${encodeURIComponent(f.name)}"
-        onclick="downloadDoc(this.dataset.e, decodeURIComponent(this.dataset.n))">⬇ Yuklab olish</button>
+        onclick="downloadDoc(this.dataset.e, decodeURIComponent(this.dataset.n))">⬇</button>
       ${USER.role === "admin" ? `<button class="btn sm" style="color:var(--danger)" data-e="${empId}" data-n="${encodeURIComponent(f.name)}"
-        onclick="deleteDoc(this.dataset.e, decodeURIComponent(this.dataset.n))">✕</button>` : ""}</div>`).join("")
-    : `<div class="empty">Hujjat yuklanmagan</div>`;
+        onclick="deleteDoc(this.dataset.e, decodeURIComponent(this.dataset.n))">✕</button>` : ""}</div>`;
+  }).join("") : `<div class="empty">Hujjat yuklanmagan</div>`);
+}
+/* Fayl nomini Supabase Storage qabul qiladigan holatga keltirish.
+   Sabab: o'zbek/rus harflari, bo'shliq va maxsus belgilar "Invalid key" xatosini beradi. */
+function safeFileName(name){
+  const dot = name.lastIndexOf(".");
+  let base = dot > 0 ? name.slice(0, dot) : name;
+  let ext  = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+  const map = { "а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"yo","ж":"j","з":"z","и":"i",
+    "й":"y","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r","с":"s","т":"t","у":"u",
+    "ф":"f","х":"h","ц":"ts","ч":"ch","ш":"sh","щ":"sch","ъ":"","ы":"i","ь":"","э":"e","ю":"yu","я":"ya",
+    "ў":"o","қ":"q","ғ":"g","ҳ":"h","ʻ":"","ʼ":"","'":"","'":"","'":"" };
+  base = base.toLowerCase().split("").map(ch => map[ch] !== undefined ? map[ch] : ch).join("");
+  base = base.replace(/[^a-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  if (!base) base = "hujjat";
+  base = base.slice(0, 60);
+  ext = ext.replace(/[^a-z0-9]/g, "").slice(0, 8);
+  return ext ? `${base}.${ext}` : base;
 }
 async function uploadDoc(empId, input){
   const file = input.files[0]; if (!file) return;
-  if (file.size > 10 * 1024 * 1024) return toast("Fayl 10 MB dan katta");
+  if (file.size > 10 * 1024 * 1024) { input.value=""; return toast("Fayl 10 MB dan katta"); }
   toast("Yuklanmoqda...");
-  const { error } = await sb.storage.from("docs").upload(`${empId}/${file.name}`, file, { upsert: true });
+  const docType = document.getElementById("docTypeSel")?.value || null;
+  const clean = safeFileName(file.name);
+  const stamped = Date.now().toString(36) + "-" + clean; // nom to'qnashuvining oldini oladi
+  const { error } = await sb.storage.from("docs")
+    .upload(`${empId}/${stamped}`, file, { upsert: true, contentType: file.type || "application/octet-stream" });
   input.value = "";
-  if (error) return toast("Xatolik: " + error.message);
+  if (error) return toast("Yuklanmadi: " + error.message);
+  // Hujjat turini belgilash (agar tanlangan bo'lsa)
+  if (docType) {
+    const { error: e2 } = await sb.from("emp_docs")
+      .upsert({ emp: empId, doc_type: +docType, file: stamped }, { onConflict: "emp,file" });
+    if (e2) toast("Tur belgilanmadi: " + e2.message);
+  }
   toast("Hujjat yuklandi ✓"); loadDocs(empId);
 }
 async function downloadDoc(empId, name){
@@ -1252,14 +1356,48 @@ function personalBlock(e){
         <h3 class="section-title">So'nggi davomat</h3>
         <div class="card t-wrap"><table>
           <tr><th>Sana</th><th>Kelgan</th><th>Ketgan</th><th>Soat</th></tr>
-          ${empAttendance(e.id).slice(-7).reverse().map(a=>`
-            <tr><td>${uzDate(a.date)}</td>
-            <td class="num">${a.in} ${a.geo?`<a href="https://maps.google.com/?q=${a.geo}" target="_blank" rel="noopener" title="Xaritada ochish: ${a.geo}" style="text-decoration:none">📍</a>`:""} ${a.late?'<span class="tag danger">kech</span>':''}</td>
+          ${empAttendance(e.id).slice(-7).reverse().map(a=>{
+            const lm = Math.max(0, minutes(a.in) - minutes(WORK_START));
+            const llm = a.lunchOut && a.lunchBack ? Math.max(0,(minutes(a.lunchBack)-minutes(a.lunchOut))-LUNCH_MAX) : 0;
+            const own = String(e.id) === String(USER.id);
+            let lateTag = "";
+            if (lm || llm) {
+              if (a.lateExcused || a.lunchExcused) lateTag = `<span class="tag info">sababli ✓</span>`;
+              else if (a.excuseReq === "pending") lateTag = `<span class="tag gold">sabab yuborildi</span>`;
+              else {
+                const f = FINE_PER_MIN ? ` · ${fmtShort((lm+llm)*FINE_PER_MIN)}` : "";
+                lateTag = `<span class="tag danger">kech ${lm+llm} daq${f}</span>` +
+                  (own ? ` <button class="btn ghost sm" onclick="openExcuse('${a.date}')">Sabab</button>` : "");
+              }
+            }
+            return `<tr><td>${uzDate(a.date)}</td>
+            <td class="num">${a.in} ${a.geo?`<a href="https://maps.google.com/?q=${a.geo}" target="_blank" rel="noopener" style="text-decoration:none">📍</a>`:""} ${lateTag}</td>
             <td class="num">${a.out ?? "—"} ${a.auto?'<span class="tag gold">avto</span>':""}</td>
-            <td class="num">${a.out ? workedHours(a).toFixed(1) : "—"}</td></tr>`).join("")}
+            <td class="num">${a.out ? workedHours(a).toFixed(1) : "—"}</td></tr>`;}).join("")}
         </table></div>
       </div>
     </div>
+    ${String(e.id) === String(USER.id) ? `
+    <h3 class="section-title" style="margin-top:18px">Mening ma'lumotlarim</h3>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="card" style="padding:16px">
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">${avatarHtml(e,"lg")}
+          <div><b style="font-family:'Sora';font-size:16px">${esc(e.name)}</b><br>
+            <span style="color:var(--muted);font-size:13px">${esc(e.pos)}${e.dept?" · "+esc(deptById(e.dept)?.name||""):""}</span></div></div>
+        <div class="emp-mini">
+          <div><b class="num">${roleLabel(e.role)}</b><span>LAVOZIM TURI</span></div>
+          <div><b class="num">${e.login?esc(e.login):"—"}</b><span>LOGIN</span></div>
+          <div><b class="num">${fmtShort(e.salary)}</b><span>OYLIK</span></div>
+        </div>
+        <div style="margin-top:12px">${contractTag(e.contract)}</div>
+        ${e.fieldWork?'<div style="margin-top:7px"><span class="tag info">Tashqaridan keldim/ketdim bosa oladi</span></div>':""}
+        ${e.canReassign?`<div style="margin-top:7px"><span class="tag info">Vazifani boshqaga o'tkaza oladi</span></div>`:""}
+      </div>
+      <div class="card" style="padding:16px">
+        <b style="font-size:13.5px">📄 Mening hujjatlarim</b>
+        <div id="docsList" style="margin-top:9px"><div class="empty" style="padding:10px">Yuklanmoqda...</div></div>
+      </div>
+    </div>` : ""}
     <style>@media(max-width:900px){#page .grid[style*="1fr 1fr"]{grid-template-columns:1fr!important}}</style>`;
 }
 function pgMe(){ return personalBlock(USER); }
@@ -1269,21 +1407,27 @@ function pgEmployees(){
   const scope = scopeEmployees();
   const addBtn = USER.role === "admin"
     ? `<button class="btn primary" onclick="openEmpModal()">${IC.plus} Xodim qo'shish</button>
-       <button class="btn ghost" onclick="openDeptModal()">Bo'limlar</button>` : "";
+       <button class="btn ghost" onclick="openDeptModal()">Bo'limlar</button>
+       <button class="btn ghost" onclick="openDocTypes()">📄 Hujjatlar ro'yxati</button>
+       <button class="btn ghost" onclick="openFineSettings()">⏱ Kechikish jarimasi</button>` : "";
   const cards = scope.map(e => {
     const earn = earnedToDate(e);
     const d = e.dept ? deptById(e.dept) : null;
     const adminBtns = USER.role === "admin"
       ? `<div style="display:flex;gap:7px"><button class="btn ghost sm" onclick="openEmpModal('${e.id}')">Tahrirlash</button>
          <button class="btn sm" style="color:var(--danger)" onclick="removeEmp('${e.id}')">Chiqarish</button></div>` : "";
-    const contractWarn = e.contract && daysTo(e.contract) <= 30
-      ? `<span class="tag ${daysTo(e.contract)<0?"danger":"gold"}" style="align-self:flex-start">📄 shartnoma ${daysTo(e.contract)<0?"muddati o'tgan":daysTo(e.contract)+" kun"}</span>` : "";
+    const contractWarn = `<span style="align-self:flex-start">${contractTag(e.contract, true)}</span>`;
+    const docWarn = (CLOUD && DOC_TYPES.length && (USER.role==="admin"||isExec(USER.role)))
+      ? (() => { const st = docStatus(e.id);
+          return `<span style="align-self:flex-start"><span class="tag ${st.ok?"success":"danger"}"
+            title="${st.missing.length?"Yetishmayapti: "+st.missing.map(m=>m.name).join(", "):"Hujjatlar to'liq"}">📎 hujjat ${st.have}/${st.total}</span></span>`; })()
+      : "";
     return `<div class="card emp-card">
       <div class="head" style="cursor:pointer" onclick="viewEmp('${e.id}')" title="Profilni ochish">${avatarHtml(e)}
         <div style="flex:1"><b>${esc(e.name)}</b><span>${esc(e.pos)}</span></div>
         ${d ? `<span class="tag" style="background:${d.color}22;color:${d.color}">${d.name.replace(" bo'limi","")}</span>` : roleTag(e.role)}
       </div>
-      ${contractWarn}
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${contractWarn}${docWarn}</div>
       <button class="btn ghost sm" style="align-self:flex-start" onclick="viewEmp('${e.id}')">Profilni ochish →</button>
       <div class="emp-mini">
         ${(USER.role==="admin"||USER.role==="rahbar") ? `
@@ -1685,14 +1829,27 @@ function pgAttendance(){
       <div class="att-cells">
         <div><span class="sub2">KELDI</span><b class="num">${a.in}</b>
           ${a.geo?`<a href="https://maps.google.com/?q=${a.geo}" target="_blank" rel="noopener" style="text-decoration:none" title="Kelgan joy">📍</a>`:""}
-          ${a.late?'<span class="tag danger">kech</span>':'<span class="tag success">vaqtida</span>'}
+          ${(() => { const lm = Math.max(0, minutes(a.in) - minutes(WORK_START));
+            if (!lm) return '<span class="tag success">vaqtida</span>';
+            if (a.lateExcused) return `<span class="tag info" title="${esc(a.excuseNote||"")}">kech ${lm} daq · sababli ✓</span>`;
+            const f = FINE_PER_MIN ? ` · ${fmtShort(lm*FINE_PER_MIN)}` : "";
+            return `<span class="tag danger">kech ${lm} daq${f}</span>`; })()}
           ${isFieldDay(a.emp,a.date)?'<span class="tag info">ruxsatli tashqarida</span>':""}
-          ${fieldTag(a.inField, a.inAppr, a.emp, a.date, "in")}</div>
+          ${fieldTag(a.inField, a.inAppr, a.emp, a.date, "in")}
+          ${a.excuseReq === "pending" && canApproveOT({emp:a.emp})
+            ? `<span class="tag gold" title="${esc(a.excuseNote||"")}">sabab: ${esc((a.excuseNote||"").slice(0,28))}</span>
+               <button class="btn success sm" onclick="decideExcuse('${a.emp}','${a.date}','approved')">✓</button>
+               <button class="btn ghost sm" onclick="decideExcuse('${a.emp}','${a.date}','rejected')">✗</button>`
+            : (a.excuseReq === "rejected" ? '<span class="tag danger">sabab rad etilgan</span>' : "")}</div>
         <div><span class="sub2">KETDI</span><b class="num">${a.out ?? "—"}</b>
           ${a.outGeo?`<a href="https://maps.google.com/?q=${a.outGeo}" target="_blank" rel="noopener" style="text-decoration:none" title="Ishni tugatgan joy">📍</a>`:""}
           ${!a.out?'<span class="tag gold">ishda</span>':""}
           ${a.auto?'<span class="tag gold" title="18:00 bilan avto yopilgan">avto</span>':""}
-          ${a.lunchLate?'<span class="tag danger">obed kech</span>':""}
+          ${(() => { const llm = a.lunchOut && a.lunchBack ? Math.max(0, (minutes(a.lunchBack)-minutes(a.lunchOut)) - LUNCH_MAX) : 0;
+            if (!llm) return "";
+            if (a.lunchExcused) return `<span class="tag info">obed +${llm} daq · sababli ✓</span>`;
+            const f = FINE_PER_MIN ? ` · ${fmtShort(llm*FINE_PER_MIN)}` : "";
+            return `<span class="tag danger">obed +${llm} daq${f}</span>`; })()}
           ${fieldTag(a.outField, a.outAppr, a.emp, a.date, "out")}</div>
         <div><span class="sub2">SOAT</span><b class="num">${a.out ? workedHours(a).toFixed(1) : "—"}</b></div>
         ${otm > 0 ? `<div><span class="sub2">QO'SHIMCHA</span>
@@ -1708,7 +1865,7 @@ function pgAttendance(){
 
   const days = dates.map(date => {
     const dayRecs = recs.filter(a => a.date === date);
-    const dayLate = dayRecs.filter(a => a.late || a.lunchLate).length;
+    const dayLate = dayRecs.filter(a => countsLate(a) || countsLunchLate(a)).length;
     let inner;
     if (grouped) {
       const groups = [...DEPTS.map(d => ({ id: d.id, name: d.name, color: d.color })),
@@ -1718,7 +1875,7 @@ function pgAttendance(){
         if (!emps.length) return "";
         const dr = dayRecs.filter(a => emps.some(e => String(e.id) === String(a.emp)));
         const came = dr.length;
-        const late = dr.filter(a => a.late || a.lunchLate).length;
+        const late = dr.filter(a => countsLate(a) || countsLunchLate(a)).length;
         const outg = dr.filter(a => isFieldDay(a.emp, a.date)).length;
         const absent = emps.filter(e => !dr.some(a => String(a.emp) === String(e.id)));
         const key = `d:${date}:${g.id}`;
@@ -2008,7 +2165,108 @@ async function decideOT(emp, date, status){
   render();
 }
 
-/* Tashqaridan belgilangan kelish (in) yoki ketish (out)ni tasdiqlash/rad etish */
+/* Admin: talab qilinadigan hujjatlar ro'yxati */
+async function openDocTypes(){
+  await loadDocTypes();
+  openModal(`
+    <h3>📄 Hujjatlar ro'yxati</h3>
+    <div class="sub">Har bir xodimda bo'lishi kerak bo'lgan hujjatlar. "Majburiy" belgilanganlari to'liqlik hisobiga kiradi.</div>
+    <div id="dtList" style="margin-top:12px">${DOC_TYPES.map(d=>`
+      <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px;font-size:13px">
+        <span style="flex:1">${esc(d.name)}</span>
+        <span class="tag ${d.required?"danger":"muted"}">${d.required?"majburiy":"ixtiyoriy"}</span>
+        <button class="btn sm" style="color:var(--danger)" onclick="delDocType('${d.id}')">✕</button>
+      </div>`).join("") || `<div class="empty" style="padding:10px">Ro'yxat bo'sh</div>`}</div>
+    <div style="border-top:1px solid var(--line);padding-top:12px;margin-top:12px">
+      <label>Yangi hujjat nomi</label><input id="dtName" placeholder="masalan: Haydovchilik guvohnomasi">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:10px">
+        <input type="checkbox" id="dtReq" style="width:auto" checked> Majburiy hujjat</label>
+      <button class="btn primary sm" style="margin-top:10px" onclick="addDocType()">Qo'shish</button>
+    </div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
+}
+async function addDocType(){
+  const name = $("#dtName").value.trim();
+  if (!name) return toast("Nomini kiriting");
+  const required = !!$("#dtReq").checked;
+  if (CLOUD) {
+    const { error } = await sb.from("doc_types").insert({ name, required, sort: DOC_TYPES.length + 1 });
+    if (error) return toast("Xatolik: " + error.message);
+  } else DOC_TYPES.push({ id: Date.now(), name, required, sort: DOC_TYPES.length + 1 });
+  toast("Qo'shildi ✓"); openDocTypes();
+}
+async function delDocType(id){
+  if (CLOUD) {
+    const { error } = await sb.from("doc_types").delete().eq("id", id);
+    if (error) return toast("Xatolik: " + error.message);
+  } else DOC_TYPES = DOC_TYPES.filter(d => String(d.id) !== String(id));
+  toast("O'chirildi"); openDocTypes();
+}
+/* Admin: kechikish jarimasi (1 daqiqa narxi) */
+function openFineSettings(){
+  openModal(`
+    <h3>⏱ Kechikish jarimasi</h3>
+    <div class="sub">Bu <b>umumiy sozlama</b> — barcha xodimlarga bir xil amal qiladi. Bir marta kiritsangiz kifoya.</div>
+    <label>1 daqiqa uchun (so'm)</label>
+    <input id="fpm" type="number" min="0" step="100" value="${FINE_PER_MIN}">
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">
+      Misol: 1000 so'm × 15 daqiqa kechikish = ${fmtShort(15000)} jarima.<br>
+      Sababi tasdiqlangan kechikishlarga jarima yozilmaydi.</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor</button>
+    <button class="btn primary" onclick="saveFineSettings()">Saqlash</button></div>`);
+}
+async function saveFineSettings(){
+  const v = Math.max(0, +$("#fpm").value || 0);
+  if (CLOUD) {
+    const { error } = await sb.from("settings").update({ fine_per_min: v }).eq("id", 1);
+    if (error) return toast("Xatolik: " + error.message);
+  }
+  FINE_PER_MIN = v;
+  closeModal(); toast(v ? `Jarima: ${fmtShort(v)}/daqiqa` : "Avtomatik jarima o'chirildi"); render();
+}
+
+/* Kechikish uchun sabab (ruxsat) so'rash — xodim yuboradi */
+function openExcuse(date){
+  const a = ATTENDANCE.find(x => String(x.emp) === String(USER.id) && x.date === date);
+  if (!a) return;
+  const lm = lateMinutes(a), llm = lunchLateMinutes(a);
+  openModal(`
+    <h3>Kechikish uchun sabab</h3>
+    <div class="sub">${uzDate(date)} — ${lm ? `kelishda ${lm} daq` : ""}${lm&&llm?", ":""}${llm ? `obedda ${llm} daq` : ""} kechikish</div>
+    <label>Sabab (boshliq ko'radi va tasdiqlaydi)</label>
+    <textarea id="exText" rows="3" placeholder="masalan: shifokorda edim, ruxsat olgandim"></textarea>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:7px">Tasdiqlansa — bu kechikish reytingga ta'sir qilmaydi va jarima yozilmaydi.</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor</button>
+    <button class="btn primary" onclick="sendExcuse('${date}')">Yuborish</button></div>`);
+}
+async function sendExcuse(date){
+  const a = ATTENDANCE.find(x => String(x.emp) === String(USER.id) && x.date === date);
+  const note = $("#exText").value.trim();
+  if (!note) return toast("Sababni yozing");
+  if (CLOUD) {
+    const { data, error } = await sb.from("attendance")
+      .update({ excuse_note: note, excuse_req: "pending" }).eq("id", a.id).select();
+    if (error) return toast("Xatolik: " + error.message);
+    if (!data || !data.length) return toast("Ruxsat yo'q — supabase-update-10.sql ni Run qiling");
+  }
+  a.excuseNote = note; a.excuseReq = "pending";
+  closeModal(); toast("Sabab boshliqqa yuborildi — tasdiqlanishini kuting"); render();
+}
+/* Boshliq/rahbar sababni tasdiqlaydi yoki rad etadi */
+async function decideExcuse(emp, date, status){
+  const a = ATTENDANCE.find(x => String(x.emp) === String(emp) && x.date === date);
+  if (!a) return;
+  const excused = status === "approved";
+  const patch = { excuse_req: status, late_excused: excused, lunch_excused: excused };
+  if (CLOUD) {
+    const { data, error } = await sb.from("attendance").update(patch).eq("id", a.id).select();
+    if (error) return toast("Xatolik: " + error.message);
+    if (!data || !data.length) return toast("Ruxsat yo'q — supabase-update-10.sql ni Run qiling");
+  }
+  a.excuseReq = status; a.lateExcused = excused; a.lunchExcused = excused;
+  toast(excused ? "Sabab tasdiqlandi — kechikish hisobga olinmaydi ✓" : "Sabab rad etildi");
+  render();
+}
 async function decideField(emp, date, which, status){
   const a = ATTENDANCE.find(x => String(x.emp) === String(emp) && x.date === date);
   if (!a) return;
@@ -2266,6 +2524,7 @@ async function loadAll(){
   if (dp.data && dp.data.length) DEPTS = dp.data.map(d => ({ id: d.id, name: d.name, color: d.color }));
   OFFICE = (st.data && st.data.office_lat != null)
     ? { lat: st.data.office_lat, lng: st.data.office_lng, radius: st.data.radius_m || 100 } : null;
+  FINE_PER_MIN = st.data ? (+st.data.fine_per_min || 0) : 0;
   FIELD_DAYS = (fd.data || []).map(f => ({ id: f.id, emp: f.emp, date: f.date, note: f.note }));
   EMPLOYEES = (pr.data || []).map(p => ({ id: p.id, name: p.name, role: p.role, dept: p.dept,
     pos: p.pos, salary: +p.salary, color: p.color, login: toShort(p.email),
@@ -2280,6 +2539,7 @@ async function loadAll(){
     if (p && Date.now() - p.at < 12000) { nt.status = p.status; if (p.status === "done") nt.doneAt = nt.doneAt || TODAY; }
     return nt;
   });
+  loadDocTypes();
   FINEBONUS = (fb.data || []).map(f => ({ id: f.id, emp: f.emp, type: f.type,
     amount: +f.amount, reason: f.reason, date: f.date }));
   ATTENDANCE = (at.data || []).map(a => ({ id: a.id, emp: a.emp, date: a.date,
@@ -2287,6 +2547,8 @@ async function loadAll(){
     late: a.late, ot: a.ot_status || "none",
     lunchBack: a.lunch_back ? a.lunch_back.slice(0,5) : null, lunchLate: !!a.lunch_late,
     lunchOut: a.lunch_out ? a.lunch_out.slice(0,5) : null,
+    lateExcused: !!a.late_excused, lunchExcused: !!a.lunch_excused,
+    excuseNote: a.excuse_note, excuseReq: a.excuse_req || "none",
     inField: !!a.in_field, outField: !!a.out_field, inAppr: a.in_appr || "none", outAppr: a.out_appr || "none",
     outGeo: (a.out_lat != null && a.out_lng != null) ? a.out_lat.toFixed(5) + "," + a.out_lng.toFixed(5) : null,
     geo: (a.lat != null && a.lng != null) ? a.lat.toFixed(5) + "," + a.lng.toFixed(5) : null }));
