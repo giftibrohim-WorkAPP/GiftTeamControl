@@ -667,17 +667,21 @@ function earnedToDate(e){
   const planSoFar = days * PLAN_HOURS;
   const diff = hours - planSoFar;
   const manualFine = sumFB(e.id,"fine");
-  const fine = manualFine + lateFineSum;
+  const fine = manualFine + lateFineSum;   // jami jarima (ALOHIDA hisob)
+  const bonus = sumFB(e.id,"bonus");
   return { base, hours, days, hourRate, planSoFar, diff,
-           bonus: sumFB(e.id,"bonus"), fine, manualFine, lateFine: lateFineSum,
-           total: base + sumFB(e.id,"bonus") - fine };
+           bonus, fine, manualFine, lateFine: lateFineSum,
+           // Maosh: faqat ishlagan soat + bonus. Jarima bu yerga ARALASHTIRILMAYDI.
+           total: base + bonus,
+           // Jarima alohida ko'rsatiladi va alohida undiriladi
+           fineTotal: fine };
 }
 // Samaradorlik: 60% bajarilgan vazifalar + 20% muddatida topshirish + 20% o'z vaqtida kelish
 // effDetail — KPI nimadan yig'ilganining to'liq raqamlari
 function effDetail(id){
   const t = TASKS.filter(x => isTaskDoer(x, id));
   const done = t.filter(x => x.status === "done");
-  const onTime = done.filter(x => !x.doneAt || x.doneAt <= x.due);
+  const onTime = done.filter(x => !x.doneAt || x.doneAt <= x.due);  // kun aniqligida
   const at = empAttendance(id);
   const punct = at.filter(a => !countsLate(a) && !countsLunchLate(a));
   const tScore = t.length ? done.length / t.length : 0;
@@ -819,8 +823,9 @@ function notifList(){
     .forEach(t => items.push({ ic:"⚠️", cls:"danger", text:`Muddati o'tdi: «${t.title}» — ${empById(t.emp).name.split(" ")[0]}`, go:"tasks" }));
   ATTENDANCE.filter(a => a.ot === "pending" && canApproveOT(a) && ids.includes(String(a.emp))).forEach(a =>
     items.push({ ic:"⏱", cls:"gold", text:`${empById(a.emp).name.split(" ")[0]} — qo'shimcha ${otMinutes(a)} daqiqa tasdiq kutmoqda (${uzDate(a.date)})`, go:"attendance" }));
-  ATTENDANCE.filter(a => a.excuseReq === "pending" && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
-    items.push({ ic:"📝", cls:"gold", text:`${empById(a.emp)?.name.split(" ")[0]} — kechikish sababi tasdiqlanishini kutmoqda (${uzDate(a.date)})`, go:"attendance" }));
+  ATTENDANCE.filter(a => a.excuseReq === "pending" && canDecideExcuse(a) && ids.includes(String(a.emp))).forEach(a =>
+    items.push({ ic:"📝", cls: a.excuseLate ? "danger" : "gold",
+      text:`${empById(a.emp)?.name.split(" ")[0]} — kechikish sababi${a.excuseLate?" (KECH yuborilgan, faqat admin)":""} (${uzDate(a.date)})`, go:"attendance" }));
   ATTENDANCE.filter(a => a.inField && a.inAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
     items.push({ ic:"🚶", cls:"info", text:`${empById(a.emp).name.split(" ")[0]} — tashqaridan kelishni tasdiqlash (${uzDate(a.date)})`, go:"attendance" }));
   ATTENDANCE.filter(a => a.outField && a.outAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
@@ -856,11 +861,12 @@ function downloadCSV(name, rows){
   toast("CSV yuklab olindi — Excel'da oching");
 }
 function exportPayroll(){
-  const rows = [["Xodim","Lavozim","Oylik maosh","Soatlik stavka","Ishlagan soat","Reja soat","Farq (soat)","Hisoblangan","Bonus","Jarima","Sof to'lov"]];
+  const rows = [["Xodim","Lavozim","Oylik maosh","Soatlik stavka","Ishlagan soat","Reja soat","Farq (soat)","Hisoblangan","Bonus","Maosh (jarimasiz)","Jarima: kechikish","Jarima: qo'lda","Jarima jami (alohida)"]];
   scopeEmployees().forEach(e => {
     const r = earnedToDate(e);
     rows.push([e.name, e.pos, e.salary, Math.round(r.hourRate), r.hours.toFixed(1), r.planSoFar,
-               r.diff.toFixed(1), Math.round(r.base), r.bonus, r.fine, Math.round(r.total)]);
+               r.diff.toFixed(1), Math.round(r.base), r.bonus, Math.round(r.total),
+               Math.round(r.lateFine), Math.round(r.manualFine), Math.round(r.fine)]);
   });
   downloadCSV("hisob-kitob_iyul-2026", rows);
 }
@@ -955,8 +961,11 @@ function pgProfile(){
     <div class="card">
       ${CLOUD ? `<div id="docsList"><div class="empty">Yuklanmoqda...</div></div>
         ${USER.role === "admin" ? `<div style="padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:9px;align-items:center;flex-wrap:wrap">
-          <select id="docTypeSel" style="width:auto;min-width:180px"><option value="">Hujjat turi (ixtiyoriy)</option>
-            ${DOC_TYPES.map(d=>`<option value="${d.id}">${esc(d.name)}${d.required?" *":""}</option>`).join("")}</select>
+          <div style="width:100%">
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Bu fayl ichida qaysi hujjatlar bor? (bir nechtasini belgilang)</div>
+            <div class="emp-pick">${DOC_TYPES.map(d=>`
+              <label class="pick-chip"><input type="checkbox" class="docTypeChk" value="${d.id}"><span>${esc(d.name)}${d.required?" *":""}</span></label>`).join("")}</div>
+          </div>
           <label class="btn ghost sm" style="cursor:pointer">📤 Fayl yuklash
             <input type="file" accept="application/pdf,.pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc('${e.id}', this)"></label>
           <span style="font-size:11.5px;color:var(--muted)">PDF yoki rasm, 10 MB gacha</span></div>` : ""}`
@@ -965,10 +974,11 @@ function pgProfile(){
   // Pul ko'rsatkichlari: admin/rahbar har kimni; boshliq esa FAQAT o'zini ko'radi
   const seeMoney = USER.role === "admin" || isExec(USER.role) || String(e.id) === String(USER.id);
   const moneyCards = seeMoney ? `
-      <div class="card stat"><div class="lbl">${IC.money} Oy boshidan</div><div class="val num">${fmtShort(earn.total)}</div>
-        <div class="delta" style="color:var(--muted)">oylik ${fmtShort(e.salary)}</div></div>
-      <div class="card stat"><div class="lbl">${IC.up} Bonus / Jarima</div>
-        <div class="val num" style="font-size:18px"><span style="color:var(--success)">+${fmtShort(earn.bonus)}</span> · <span style="color:var(--danger)">−${fmtShort(earn.fine)}</span></div></div>` : "";
+      <div class="card stat"><div class="lbl">${IC.money} Maosh (jarimasiz)</div><div class="val num">${fmtShort(earn.total)}</div>
+        <div class="delta" style="color:var(--muted)">oylik ${fmtShort(e.salary)} · bonus qo'shilgan</div></div>
+      <div class="card stat"><div class="lbl">${IC.down} Jarima (alohida)</div>
+        <div class="val num" style="color:var(--danger)">${earn.fine?"−"+fmtShort(earn.fine):"yo'q"}</div>
+        <div class="delta" style="color:var(--muted)">${earn.lateFine?`kechikish ${fmtShort(earn.lateFine)}`:""}${earn.lateFine&&earn.manualFine?" · ":""}${earn.manualFine?`qo'lda ${fmtShort(earn.manualFine)}`:""}</div></div>` : "";
   return `
     <div class="card" style="padding:18px;display:flex;gap:15px;align-items:center;flex-wrap:wrap;margin-bottom:15px">
       <button class="btn ghost sm" onclick="go('employees')">← Orqaga</button>
@@ -1021,14 +1031,18 @@ async function loadDocTypes(){
     sb.from("emp_docs").select("*"),
   ]);
   if (dt.data) DOC_TYPES = dt.data.map(d => ({ id: d.id, name: d.name, required: d.required, sort: d.sort }));
-  if (ed.data) EMP_DOCS = ed.data.map(d => ({ emp: d.emp, type: d.doc_type, file: d.file }));
+  if (ed.data) EMP_DOCS = ed.data.map(d => ({ emp: d.emp, file: d.file,
+    types: (d.doc_types && d.doc_types.length) ? d.doc_types : (d.doc_type ? [d.doc_type] : []) }));
 }
 /* Xodimda qaysi majburiy hujjatlar bor / yetishmayapti */
 function docStatus(empId){
   const req = DOC_TYPES.filter(d => d.required);
   const mine = EMP_DOCS.filter(d => String(d.emp) === String(empId));
-  const have = req.filter(r => mine.some(m => String(m.type) === String(r.id)));
-  const missing = req.filter(r => !mine.some(m => String(m.type) === String(r.id)));
+  // Bitta fayl ichida bir nechta hujjat bo'lishi mumkin — belgilangan barcha turlarni yig'amiz
+  const covered = new Set();
+  mine.forEach(m => (m.types || []).forEach(t => covered.add(String(t))));
+  const have = req.filter(r => covered.has(String(r.id)));
+  const missing = req.filter(r => !covered.has(String(r.id)));
   return { total: req.length, have: have.length, missing, ok: req.length > 0 && missing.length === 0 };
 }
 async function loadDocs(empId){
@@ -1038,10 +1052,10 @@ async function loadDocs(empId){
   if (error) { el.innerHTML = `<div class="empty">Xatolik: ${esc(error.message)}</div>`; return; }
   const files = (data || []).filter(f => f.name !== ".emptyFolderPlaceholder");
   const st = docStatus(empId);
-  const typeOf = fname => {
+  const typesOf = fname => {
     const rec = EMP_DOCS.find(d => String(d.emp) === String(empId) && d.file === fname);
-    const t = rec && DOC_TYPES.find(x => String(x.id) === String(rec.type));
-    return t ? t.name : null;
+    if (!rec || !rec.types) return [];
+    return rec.types.map(t => DOC_TYPES.find(x => String(x.id) === String(t))).filter(Boolean);
   };
   const checklist = DOC_TYPES.length ? `
     <div style="margin-bottom:11px;padding:10px 12px;border-radius:12px;background:var(--surface2)">
@@ -1050,9 +1064,11 @@ async function loadDocs(empId){
       ${st.missing.length ? `<div style="font-size:12px;color:var(--muted);margin-top:5px">Yetishmayapti: ${st.missing.map(m=>esc(m.name)).join(", ")}</div>` : ""}
     </div>` : "";
   el.innerHTML = checklist + (files.length ? files.map(f => {
-    const tn = typeOf(f.name);
+    const tl = typesOf(f.name);
+    const title = tl.length ? tl.map(t=>esc(t.name)).join(" + ") : esc(f.name);
     return `<div class="fb-item"><div class="fb-icon" style="background:var(--info-soft);color:var(--info)">📄</div>
-      <div class="meta"><b>${tn ? esc(tn) : esc(f.name)}</b><span>${tn ? esc(f.name) + " · " : ""}${f.metadata ? Math.max(1, Math.round(f.metadata.size/1024)) + " KB" : ""}</span></div>
+      <div class="meta"><b>${title}</b><span>${tl.length ? esc(f.name)+" · " : ""}${f.metadata ? Math.max(1, Math.round(f.metadata.size/1024))+" KB" : ""}${tl.length>1?` · ${tl.length} ta hujjat bitta faylda`:""}</span></div>
+      ${USER.role==="admin" ? `<button class="btn ghost sm" title="Ichidagi hujjatlarni belgilash" data-e="${empId}" data-n="${encodeURIComponent(f.name)}" onclick="openDocTag(this.dataset.e, decodeURIComponent(this.dataset.n))">🏷</button>` : ""}
       <button class="btn ghost sm" data-e="${empId}" data-n="${encodeURIComponent(f.name)}"
         onclick="downloadDoc(this.dataset.e, decodeURIComponent(this.dataset.n))">⬇</button>
       ${USER.role === "admin" ? `<button class="btn sm" style="color:var(--danger)" data-e="${empId}" data-n="${encodeURIComponent(f.name)}"
@@ -1080,7 +1096,7 @@ async function uploadDoc(empId, input){
   const file = input.files[0]; if (!file) return;
   if (file.size > 10 * 1024 * 1024) { input.value=""; return toast("Fayl 10 MB dan katta"); }
   toast("Yuklanmoqda...");
-  const docType = document.getElementById("docTypeSel")?.value || null;
+  const picked = [...document.querySelectorAll(".docTypeChk:checked")].map(i => +i.value);
   const clean = safeFileName(file.name);
   const stamped = Date.now().toString(36) + "-" + clean; // nom to'qnashuvining oldini oladi
   const { error } = await sb.storage.from("docs")
@@ -1088,11 +1104,12 @@ async function uploadDoc(empId, input){
   input.value = "";
   if (error) return toast("Yuklanmadi: " + error.message);
   // Hujjat turini belgilash (agar tanlangan bo'lsa)
-  if (docType) {
+  if (picked.length) {
     const { error: e2 } = await sb.from("emp_docs")
-      .upsert({ emp: empId, doc_type: +docType, file: stamped }, { onConflict: "emp,file" });
-    if (e2) toast("Tur belgilanmadi: " + e2.message);
+      .upsert({ emp: empId, doc_types: picked, doc_type: picked[0], file: stamped }, { onConflict: "emp,file" });
+    if (e2) toast("Turlar belgilanmadi: " + e2.message);
   }
+  document.querySelectorAll(".docTypeChk:checked").forEach(i => i.checked = false);
   toast("Hujjat yuklandi ✓"); loadDocs(empId);
 }
 async function downloadDoc(empId, name){
@@ -1172,8 +1189,8 @@ function pgPayroll(){
       <td>${diffCell(r.diff)}</td>
       <td class="num">${fmtShort(r.base)}</td>
       <td class="num" style="color:var(--success)">+${fmtShort(r.bonus)}</td>
-      <td class="num" style="color:var(--danger)">−${fmtShort(r.fine)}</td>
       <td class="num"><b>${fmtShort(r.total)}</b></td>
+      <td class="num" style="color:var(--danger)">${r.fine ? "−"+fmtShort(r.fine) : "—"}</td>
     </tr>`;
   }).join("");
   const totals = scope.reduce((s,e)=>{ const r=earnedToDate(e);
@@ -1181,21 +1198,22 @@ function pgPayroll(){
   return `
     <p style="font-size:12.5px;color:var(--muted);margin-bottom:13px">
       Reja: <b>oyiga ${PLAN_DAYS} ish kuni × ${PLAN_HOURS} soat = ${PLAN_TOTAL} soat</b> (ish vaqti 9:00–18:00, obed 13:00–14:00).
-      Formula: <b>soatlik stavka (oylik ÷ ${PLAN_TOTAL}) × real ishlagan soat + bonus − jarima</b>.
+      Formula: <b>soatlik stavka (oylik ÷ ${PLAN_TOTAL}) × real ishlagan soat + bonus</b>.
+      <b style="color:var(--danger)">Jarima maoshga qo'shib hisoblanmaydi</b> — u alohida ustunda ko'rsatiladi va alohida undiriladi.
       Masalan, oylik 5&nbsp;mln bo'lsa soatlik ≈ 24&nbsp;038 so'm — ortiqcha ishlagan soatlar qo'shiladi, kam kelgan/kam ishlagan soatlar shunga ko'ra kamaytiradi.</p>
     <div class="filters"><button class="btn ghost sm" onclick="exportPayroll()">⬇ Excel (CSV) yuklab olish</button></div>
     <div class="pay-cards">${scope.map(e => { const r = earnedToDate(e); return `
       <div class="card pay-card">
         <div class="top">${avatarHtml(e,"sm")}<div><b>${esc(e.name)}</b><span>oylik ${fmtShort(e.salary)}</span></div>
-          <div class="net num">${fmtShort(r.total)}<br><span style="font-size:10px;color:var(--muted);font-weight:600">sof to'lov</span></div></div>
+          <div class="net num">${fmtShort(r.total)}<br><span style="font-size:10px;color:var(--muted);font-weight:600">maosh (jarimasiz)</span></div></div>
         <div class="rows">
           <div><b class="num">${r.hours.toFixed(1)} / ${r.planSoFar}</b><span>SOAT / REJA</span></div>
           <div><b class="num" style="color:${r.diff>=0?"var(--success)":"var(--danger)"}">${r.diff>=0?"+":"−"}${Math.abs(r.diff).toFixed(1)} soat</b><span>FARQ</span></div>
           <div><b class="num" style="color:var(--success)">+${fmtShort(r.bonus)}</b><span>BONUS</span></div>
-          <div><b class="num" style="color:var(--danger)">−${fmtShort(r.fine)}</b><span>JARIMA</span></div>
+          <div><b class="num" style="color:var(--danger)">${r.fine?fmtShort(r.fine):"—"}</b><span>JARIMA (ALOHIDA)</span></div>
         </div></div>`; }).join("")}</div>
     <div class="card t-wrap pay-table"><table>
-      <tr><th>Xodim</th><th>Oylik maosh</th><th>Soatlik (so'm)</th><th>Ishlagan / reja soat</th><th>Farq</th><th>Hisoblangan</th><th>Bonus</th><th>Jarima</th><th>Sof to'lov</th></tr>
+      <tr><th>Xodim</th><th>Oylik maosh</th><th>Soatlik (so'm)</th><th>Ishlagan / reja soat</th><th>Farq</th><th>Hisoblangan</th><th>Bonus</th><th>Maosh (jarimasiz)</th><th>Jarima (alohida)</th></tr>
       ${rows}
       <tr style="background:var(--surface2)"><td><b>Jami</b></td><td></td><td></td><td></td><td></td>
         <td class="num"><b>${fmtShort(totals.base)}</b></td>
@@ -1454,6 +1472,17 @@ const KCOLS = [
   { id:"done",     title:"Bajarildi",         color:"var(--success)" },
 ];
 // Vazifaning barcha mas'ullari (emps massiv bo'lsa undan, aks holda bitta emp)
+/* Muddat o'tganmi (sana + soat bilan) */
+function taskOverdue(t){
+  if (t.status === "done") return false;
+  if (t.due < TODAY) return true;
+  if (t.due > TODAY) return false;
+  if (!t.dueTime) return false;                   // faqat sana berilgan — kun oxirigacha vaqt bor
+  const now = new Date();
+  const nowMin = now.getHours()*60 + now.getMinutes();
+  return nowMin > minutes(t.dueTime);
+}
+function dueLabel(t){ return uzDate(t.due) + (t.dueTime ? ` ${t.dueTime}` : ""); }
 function taskEmps(t){ return (t.emps && t.emps.length) ? t.emps : [t.emp]; }
 function isTaskDoer(t, uid){ return taskEmps(t).some(e => String(e) === String(uid)); }
 
@@ -1495,17 +1524,17 @@ function pgTasks(){
       ${items.map(t => {
         const emps = taskEmps(t).map(id => empById(id)).filter(Boolean);
         const e = emps[0];
-        const late = t.status !== "done" && t.due < TODAY;
+        const late = taskOverdue(t);
         const whoHtml = emps.length > 1
           ? `${emps.slice(0,3).map(x=>avatarHtml(x,"sm")).join("")} <span>${emps.length} mas'ul</span>`
           : `${avatarHtml(e,"sm")} <span>${esc(e?.name.split(" ")[0] || "—")}</span>`;
         return `<div class="task-card">
           <div style="cursor:pointer" onclick="openTaskView('${t.id}')" title="Batafsil ochish">
-            <div class="ttl">${t.rep && t.rep!=="none" ? `<span title="Takrorlanadi: ${repLabel(t.rep)}">🔁</span> ` : ""}${esc(t.title)} ${(t.voice||t.voiceUrl)?"🎙":""} ${t.extended?'<span title="Muddat uzaytirilgan">📅</span>':""}</div>
+            <div class="ttl">${t.rep && t.rep!=="none" ? `<span title="Takrorlanadi: ${repLabel(t.rep)}">🔁</span> ` : ""}${esc(t.title)} ${(t.voice||t.voiceUrl)?"🎙":""} ${t.extended?'<span title="Muddat uzaytirilgan">📅</span>':""}${t.forAll?'<span title="Hamma xodimlarga">👥</span>':""}</div>
             <div class="desc">${esc(t.desc).slice(0,90)}${(t.desc||"").length>90?"…":""}</div>
           </div>
           <div class="foot">${whoHtml}
-            <span class="due num ${late?"late":""}">${late?"⚠ ":""}${uzDate(t.due)}</span></div>
+            <span class="due num ${late?"late":""}">${late?"⚠ ":""}${dueLabel(t)}</span></div>
           ${taskActions(t)}
         </div>`;
       }).join("") || `<div class="empty" style="padding:18px">Bo'sh</div>`}
@@ -1607,7 +1636,8 @@ function openTaskView(id){
   const e = empById(t.emp), by = t.by ? empById(t.by) : null;
   const stLbl = { new:"Vazifa tushdi", progress:"Jarayonda", review:"Tasdiq kutilmoqda", done:"Bajarildi" };
   const stCls = { new:"info", progress:"gold", review:"danger", done:"success" };
-  const late = t.status !== "done" && t.due < TODAY;
+  const late = taskOverdue(t);
+  const emps = taskEmps(t).map(id=>empById(id)).filter(Boolean);
   openModal(`
     <h3 style="padding-right:20px">${esc(t.title)}</h3>
     <div style="margin:8px 0 4px"><span class="tag ${stCls[t.status]}">${stLbl[t.status]}</span>
@@ -1616,11 +1646,17 @@ function openTaskView(id){
     ${(t.voice || t.voiceUrl) ? `<div style="margin:8px 0"><b style="font-size:12.5px">🎙 Ovozli izoh:</b>
       <audio id="vnPlay" controls style="width:100%;margin-top:5px"></audio></div>` : ""}
     <div style="display:grid;gap:9px;font-size:13px;background:var(--surface2);border-radius:12px;padding:13px 14px">
-      <div style="display:flex;align-items:center;gap:9px">${avatarHtml(e,"sm")}
-        <div><b>${esc(e.name)}</b><br><span style="color:var(--muted);font-size:11.5px">bajaruvchi · ${esc(e.pos)}</span></div></div>
+      ${emps.length > 1
+        ? `<div><b style="font-size:12.5px">${t.forAll?"👥 Hamma xodimlarga":"Mas'ullar"} (${emps.length}):</b>
+             <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px">${emps.map(x=>`
+               <span style="display:inline-flex;align-items:center;gap:5px;background:var(--surface);border-radius:99px;padding:3px 9px 3px 3px;font-size:12px">
+                 ${avatarHtml(x,"sm")}${esc(x.name.split(" ")[0])}</span>`).join("")}</div></div>`
+        : `<div style="display:flex;align-items:center;gap:9px">${avatarHtml(e,"sm")}
+             <div><b>${esc(e?.name||"—")}</b><br><span style="color:var(--muted);font-size:11.5px">bajaruvchi · ${esc(e?.pos||"")}</span></div></div>`}
       ${by ? `<div style="display:flex;align-items:center;gap:9px">${avatarHtml(by,"sm")}
         <div><b>${esc(by.name)}</b><br><span style="color:var(--muted);font-size:11.5px">vazifani bergan</span></div></div>` : ""}
-      <div><b class="num ${late?"":""}" style="${late?"color:var(--danger)":""}">Muddat: ${uzDate(t.due)}</b>
+      <div><b class="num" style="${late?"color:var(--danger)":""}">Muddat: ${dueLabel(t)}</b>
+        ${t.extended && t.duePrev ? `<span style="color:var(--muted);font-size:11.5px"> (avval ${uzDate(t.duePrev)} edi)</span>` : ""}
         ${t.doneAt ? `<span style="color:var(--muted)"> · bajarildi: ${uzDate(t.doneAt)}</span>` : ""}</div>
     </div>
     <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:11px">
@@ -1691,7 +1727,11 @@ function openExtend(id){
   openModal(`
     <h3>📅 Muddatni cho'zish</h3>
     <div class="sub">«${esc(t.title)}» — joriy muddat: ${uzDate(t.due)}</div>
-    <label>Yangi muddat</label><input id="exDue" type="date" value="${t.due}" min="${TODAY}">
+    <label>Yangi muddat (sana va soat)</label>
+    <div style="display:flex;gap:8px">
+      <input id="exDue" type="date" value="${t.due}" min="${TODAY}" style="flex:2">
+      <input id="exDueTime" type="time" value="${t.dueTime||"18:00"}" style="flex:1">
+    </div>
     <label>Sabab (ixtiyoriy — izohga yoziladi)</label>
     <input id="exNote" placeholder="masalan: material yetkazib berish kechikdi">
     <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor</button>
@@ -1700,17 +1740,18 @@ function openExtend(id){
 async function doExtend(id){
   const t = TASKS.find(x => String(x.id) === String(id)); if (!t) return;
   const due2 = $("#exDue").value;
-  if (!due2 || due2 === t.due) return toast("Yangi muddatni tanlang");
+  const dueTime2 = $("#exDueTime") ? $("#exDueTime").value || null : null;
+  if (!due2 || (due2 === t.due && dueTime2 === t.dueTime)) return toast("Yangi muddatni tanlang");
   const note = $("#exNote").value.trim();
   const prev = t.due;
   if (CLOUD) {
-    const { error } = await sb.from("tasks").update({ due: due2, due_prev: prev, extended: true, status: "progress" }).eq("id", t.id);
+    const { error } = await sb.from("tasks").update({ due: due2, due_time: dueTime2, due_prev: prev, extended: true, status: "progress" }).eq("id", t.id);
     if (error) return toast("Xatolik: " + error.message);
     if (note) await sb.from("task_comments").insert({ task: t.id, author: USER.id, text: `📅 Muddat ${uzDate(prev)} → ${uzDate(due2)}. ${note}` });
   } else if (note) {
     COMMENTS.push({ id: Date.now(), task: t.id, author: USER.id, text: `📅 Muddat ${uzDate(prev)} → ${uzDate(due2)}. ${note}`, at: TODAY });
   }
-  t.due = due2; t.duePrev = prev; t.extended = true; t.status = "progress";
+  t.due = due2; t.dueTime = dueTime2; t.duePrev = prev; t.extended = true; t.status = "progress";
   closeModal(); toast(`Muddat ${uzDate(due2)} gacha cho'zildi — vazifa jarayonга qaytdi`); render();
 }
 
@@ -1778,7 +1819,8 @@ async function approveTask(id){
       const due2 = nextDue(t.due, t.rep);
       if (CLOUD) {
         const { data } = await sb.from("tasks")
-          .insert({ title: t.title, descr: t.desc, emp: t.emp, emps: t.emps || null, created_by: t.by, due: due2, status: "new", repeat: t.rep })
+          .insert({ title: t.title, descr: t.desc, emp: t.emp, emps: t.emps || null, created_by: t.by,
+                    due: due2, due_time: t.dueTime || null, for_all: !!t.forAll, status: "new", repeat: t.rep })
           .select().single();
         if (data) TASKS.push({ id: data.id, title: t.title, desc: t.desc, emp: t.emp, emps: t.emps, by: t.by, due: due2, status: "new", rep: t.rep });
       } else {
@@ -1836,11 +1878,12 @@ function pgAttendance(){
             return `<span class="tag danger">kech ${lm} daq${f}</span>`; })()}
           ${isFieldDay(a.emp,a.date)?'<span class="tag info">ruxsatli tashqarida</span>':""}
           ${fieldTag(a.inField, a.inAppr, a.emp, a.date, "in")}
-          ${a.excuseReq === "pending" && canApproveOT({emp:a.emp})
+          ${a.excuseReq === "pending" ? (canDecideExcuse(a)
             ? `<span class="tag gold" title="${esc(a.excuseNote||"")}">sabab: ${esc((a.excuseNote||"").slice(0,28))}</span>
                <button class="btn success sm" onclick="decideExcuse('${a.emp}','${a.date}','approved')">✓</button>
                <button class="btn ghost sm" onclick="decideExcuse('${a.emp}','${a.date}','rejected')">✗</button>`
-            : (a.excuseReq === "rejected" ? '<span class="tag danger">sabab rad etilgan</span>' : "")}</div>
+            : `<span class="tag danger" title="${esc(a.excuseNote||"")}">sabab kech yuborilgan (${EXCUSE_MIN_HOURS} soat qoidasi) — faqat admin</span>`)
+            : (a.excuseReq === "rejected" ? `<span class="tag danger">sabab rad etilgan</span>` : "")}</div>
         <div><span class="sub2">KETDI</span><b class="num">${a.out ?? "—"}</b>
           ${a.outGeo?`<a href="https://maps.google.com/?q=${a.outGeo}" target="_blank" rel="noopener" style="text-decoration:none" title="Ishni tugatgan joy">📍</a>`:""}
           ${!a.out?'<span class="tag gold">ishda</span>':""}
@@ -2165,6 +2208,27 @@ async function decideOT(emp, date, status){
   render();
 }
 
+/* Yuklangan faylga ichidagi hujjat turlarini belgilash (keyinchalik ham) */
+function openDocTag(empId, file){
+  const rec = EMP_DOCS.find(d => String(d.emp)===String(empId) && d.file===file);
+  const cur = (rec && rec.types || []).map(String);
+  openModal(`
+    <h3>🏷 Fayl ichidagi hujjatlar</h3>
+    <div class="sub">${esc(file)} — ichida qaysi hujjatlar borligini belgilang</div>
+    <div class="emp-pick" style="margin-top:10px">${DOC_TYPES.map(d=>`
+      <label class="pick-chip"><input type="checkbox" class="tagChk" value="${d.id}" ${cur.includes(String(d.id))?"checked":""}><span>${esc(d.name)}${d.required?" *":""}</span></label>`).join("")}</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor</button>
+    <button class="btn primary" onclick="saveDocTag('${empId}','${encodeURIComponent(file)}')">Saqlash</button></div>`);
+}
+async function saveDocTag(empId, fileEnc){
+  const file = decodeURIComponent(fileEnc);
+  const picked = [...document.querySelectorAll(".tagChk:checked")].map(i => +i.value);
+  const { error } = await sb.from("emp_docs")
+    .upsert({ emp: empId, doc_types: picked, doc_type: picked[0] || null, file }, { onConflict: "emp,file" });
+  if (error) return toast("Xatolik: " + error.message);
+  closeModal(); toast("Belgilandi ✓"); loadDocs(empId);
+}
+
 /* Admin: talab qilinadigan hujjatlar ro'yxati */
 async function openDocTypes(){
   await loadDocTypes();
@@ -2225,6 +2289,21 @@ async function saveFineSettings(){
   closeModal(); toast(v ? `Jarima: ${fmtShort(v)}/daqiqa` : "Avtomatik jarima o'chirildi"); render();
 }
 
+const EXCUSE_MIN_HOURS = 8; // sabab kamida shuncha soat OLDIN yuborilishi kerak
+/* Sabab o'z vaqtida yuborilganmi? (ish boshlanishidan 8 soat oldin) */
+function excuseOnTime(date, sentAt){
+  const shiftStart = new Date(date + "T" + WORK_START + ":00");
+  const sent = sentAt ? new Date(sentAt) : new Date();
+  return (shiftStart - sent) / 3600000 >= EXCUSE_MIN_HOURS;
+}
+/* Tasdiqlash tugmasi ko'rinadimi: kech yuborilgan bo'lsa faqat admin tuzata oladi */
+function canDecideExcuse(a){
+  if (!a || a.excuseReq !== "pending") return false;
+  if (USER.role === "admin") return true;          // admin har doim
+  if (a.excuseLate) return false;                  // kech yuborilgan — boshliq tasdiqlay olmaydi
+  return canApproveOT({ emp: a.emp });
+}
+
 /* Kechikish uchun sabab (ruxsat) so'rash — xodim yuboradi */
 function openExcuse(date){
   const a = ATTENDANCE.find(x => String(x.emp) === String(USER.id) && x.date === date);
@@ -2235,7 +2314,12 @@ function openExcuse(date){
     <div class="sub">${uzDate(date)} — ${lm ? `kelishda ${lm} daq` : ""}${lm&&llm?", ":""}${llm ? `obedda ${llm} daq` : ""} kechikish</div>
     <label>Sabab (boshliq ko'radi va tasdiqlaydi)</label>
     <textarea id="exText" rows="3" placeholder="masalan: shifokorda edim, ruxsat olgandim"></textarea>
-    <div style="font-size:11.5px;color:var(--muted);margin-top:7px">Tasdiqlansa — bu kechikish reytingga ta'sir qilmaydi va jarima yozilmaydi.</div>
+    ${excuseOnTime(date) ? `<div style="font-size:11.5px;color:var(--muted);margin-top:7px">
+        Tasdiqlansa — bu kechikish reytingga ta'sir qilmaydi va jarima yozilmaydi.</div>`
+      : `<div style="font-size:12px;color:var(--danger);margin-top:7px;padding:9px 11px;background:var(--danger-soft);border-radius:10px">
+        ⚠️ Kech yuborilmoqda. Qoida: sabab ish boshlanishidan kamida ${EXCUSE_MIN_HOURS} soat oldin yuborilishi kerak.
+        Kech yuborilgan so'rovni boshliq tasdiqlay olmaydi — faqat admin to'g'rilay oladi, aks holda o'sha kun uchun
+        har daqiqasiga jarima hisoblanadi.</div>`}
     <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor</button>
     <button class="btn primary" onclick="sendExcuse('${date}')">Yuborish</button></div>`);
 }
@@ -2243,27 +2327,36 @@ async function sendExcuse(date){
   const a = ATTENDANCE.find(x => String(x.emp) === String(USER.id) && x.date === date);
   const note = $("#exText").value.trim();
   if (!note) return toast("Sababni yozing");
+  const nowIso = new Date().toISOString();
+  const late = !excuseOnTime(date, nowIso);
   if (CLOUD) {
     const { data, error } = await sb.from("attendance")
-      .update({ excuse_note: note, excuse_req: "pending" }).eq("id", a.id).select();
+      .update({ excuse_note: note, excuse_req: "pending", excuse_at: nowIso, excuse_late: late }).eq("id", a.id).select();
     if (error) return toast("Xatolik: " + error.message);
-    if (!data || !data.length) return toast("Ruxsat yo'q — supabase-update-10.sql ni Run qiling");
+    if (!data || !data.length) return toast("Ruxsat yo'q — supabase-update-11.sql ni Run qiling");
   }
-  a.excuseNote = note; a.excuseReq = "pending";
-  closeModal(); toast("Sabab boshliqqa yuborildi — tasdiqlanishini kuting"); render();
+  a.excuseNote = note; a.excuseReq = "pending"; a.excuseAt = nowIso; a.excuseLate = late;
+  closeModal();
+  toast(late ? `Kech yuborildi (${EXCUSE_MIN_HOURS} soat qoidasi buzilgan) — faqat admin to'g'rilay oladi`
+             : "Sabab boshliqqa yuborildi — tasdiqlanishini kuting");
+  render();
 }
 /* Boshliq/rahbar sababni tasdiqlaydi yoki rad etadi */
 async function decideExcuse(emp, date, status){
   const a = ATTENDANCE.find(x => String(x.emp) === String(emp) && x.date === date);
   if (!a) return;
+  if (a.excuseLate && USER.role !== "admin")
+    return toast(`Bu so'rov ${EXCUSE_MIN_HOURS} soat qoidasini buzgan — faqat admin to'g'rilay oladi`);
   const excused = status === "approved";
-  const patch = { excuse_req: status, late_excused: excused, lunch_excused: excused };
+  const patch = { excuse_req: status, late_excused: excused, lunch_excused: excused,
+                  admin_excused: excused && USER.role === "admin" && a.excuseLate };
   if (CLOUD) {
     const { data, error } = await sb.from("attendance").update(patch).eq("id", a.id).select();
     if (error) return toast("Xatolik: " + error.message);
     if (!data || !data.length) return toast("Ruxsat yo'q — supabase-update-10.sql ni Run qiling");
   }
   a.excuseReq = status; a.lateExcused = excused; a.lunchExcused = excused;
+  a.adminExcused = excused && USER.role === "admin" && a.excuseLate;
   toast(excused ? "Sabab tasdiqlandi — kechikish hisobga olinmaydi ✓" : "Sabab rad etildi");
   render();
 }
@@ -2344,6 +2437,17 @@ async function saveFB(){
   closeModal(); toast("Yozuv saqlandi"); render();
 }
 
+function pickAllEmps(on){
+  document.querySelectorAll(".tEmpChk").forEach(i => i.checked = on);
+  updPickCount();
+  if (on) toast(`Hammaga tanlandi (${document.querySelectorAll(".tEmpChk").length} xodim)`);
+}
+function updPickCount(){
+  const el = document.getElementById("pickCount"); if (!el) return;
+  const n = document.querySelectorAll(".tEmpChk:checked").length;
+  const all = document.querySelectorAll(".tEmpChk").length;
+  el.textContent = n ? (n === all ? `hammasi tanlandi (${n})` : `${n} ta tanlandi`) : "";
+}
 function openTaskModal(){
   voiceBlob = null;
   // Rahbar/direktor/admin — o'zidan boshqa hammaga; boshliq — o'z bo'limiga
@@ -2356,8 +2460,13 @@ function openTaskModal(){
   openModal(`
     <h3>Yangi vazifa</h3><div class="sub">Vazifa «Vazifa tushdi» bosqichiga tushadi</div>
     <label>Mas'ul xodim(lar) — bir nechta tanlash mumkin</label>
+    <div style="display:flex;gap:7px;margin-bottom:7px;flex-wrap:wrap">
+      <button type="button" class="btn ghost sm" onclick="pickAllEmps(true)">👥 Hammaga</button>
+      <button type="button" class="btn ghost sm" onclick="pickAllEmps(false)">Tozalash</button>
+      <span id="pickCount" style="font-size:11.5px;color:var(--muted);align-self:center"></span>
+    </div>
     <div class="emp-pick">${assignable.map(e=>`
-      <label class="pick-chip"><input type="checkbox" class="tEmpChk" value="${e.id}"><span>${esc(e.name)}</span></label>`).join("")}</div>
+      <label class="pick-chip"><input type="checkbox" class="tEmpChk" value="${e.id}" onchange="updPickCount()"><span>${esc(e.name)}</span></label>`).join("")}</div>
     <div style="font-size:11px;color:var(--muted);margin-top:5px">Bir nechta belgilansa — kimdir bittasi bajarsa vazifa yopiladi (umumiy vazifa)</div>
     <label>Sarlavha</label><input id="tTitle" placeholder="Vazifa nomi">
     <label>Tavsif</label><textarea id="tDesc" rows="2" placeholder="Qisqacha tushuntirish"></textarea>
@@ -2374,7 +2483,11 @@ function openTaskModal(){
         <label class="day-chip"><input type="checkbox" value="${v}"><span>${l}</span></label>`).join("")}
       <span style="font-size:11px;color:var(--muted);width:100%">Masalan: shanbalik uchun faqat "Sha"ni belgilang</span>
     </div>
-    <label>Muddat (birinchi bajarilish kuni)</label><input id="tDue" type="date" value="${TODAY}">
+    <label>Muddat (sana va soat)</label>
+    <div style="display:flex;gap:8px">
+      <input id="tDue" type="date" value="${TODAY}" style="flex:2">
+      <input id="tDueTime" type="time" value="18:00" style="flex:1" title="Kun ichidagi muddat">
+    </div>
     <div style="display:flex;gap:8px;margin-top:14px;align-items:center;flex-wrap:wrap">
       <button type="button" class="btn ghost sm" id="micBtn" onclick="toggleDictate('tDesc', this)">🎤 Ovozdan matn</button>
       <button type="button" class="btn ghost sm" id="vnBtn" onclick="toggleVoiceNote(this)">🎙 Ovozli izoh yozish</button>
@@ -2389,6 +2502,8 @@ async function saveTask(){
   const picked = [...document.querySelectorAll(".tEmpChk:checked")].map(i => CLOUD ? i.value : +i.value);
   if (!picked.length) return toast("Kamida bitta mas'ul xodimni tanlang");
   const desc = $("#tDesc").value.trim(), due = $("#tDue").value;
+  const dueTime = $("#tDueTime") ? $("#tDueTime").value || null : null;
+  const forAll = picked.length === document.querySelectorAll(".tEmpChk").length && picked.length > 1;
   const empVal = picked[0];                 // asosiy mas'ul (moslik uchun)
   const empsVal = picked.length > 1 ? picked : null; // ko'p bo'lsa massiv
   let trep = $("#tRep") ? $("#tRep").value : "none";
@@ -2399,10 +2514,12 @@ async function saveTask(){
   }
   if (CLOUD) {
     const { data, error } = await sb.from("tasks")
-      .insert({ title, descr: desc, emp: empVal, emps: empsVal, created_by: USER.id, due, status: "new", repeat: trep })
+      .insert({ title, descr: desc, emp: empVal, emps: empsVal, created_by: USER.id, due,
+                due_time: dueTime, for_all: forAll, status: "new", repeat: trep })
       .select().single();
     if (error) return toast("Xatolik: " + error.message);
-    const nt = { id: data.id, title, desc, emp: data.emp, emps: empsVal, by: USER.id, due, status: "new", rep: trep };
+    const nt = { id: data.id, title, desc, emp: data.emp, emps: empsVal, by: USER.id, due,
+                 dueTime, forAll, status: "new", rep: trep };
     if (voiceBlob) {
       const path = data.id + ".webm";
       const { error: ve } = await sb.storage.from("voice").upload(path, voiceBlob, { upsert: true, contentType: voiceBlob.type });
@@ -2411,7 +2528,8 @@ async function saveTask(){
     }
     TASKS.push(nt);
   } else {
-    const nt = { id: Date.now(), title, desc, emp: empVal, emps: empsVal, by: USER.id, due, status: "new", rep: trep };
+    const nt = { id: Date.now(), title, desc, emp: empVal, emps: empsVal, by: USER.id, due,
+                 dueTime, forAll, status: "new", rep: trep };
     if (voiceBlob) nt.voiceUrl = URL.createObjectURL(voiceBlob);
     TASKS.push(nt);
   }
@@ -2532,7 +2650,8 @@ async function loadAll(){
   TASKS = (tk.data || []).map(t => {
     const nt = { id: t.id, title: t.title, desc: t.descr, emp: t.emp,
       emps: t.emps || null, by: t.created_by, due: t.due, status: t.status, doneAt: t.done_at,
-      rep: t.repeat || "none", voice: t.voice, extended: !!t.extended, duePrev: t.due_prev };
+      rep: t.repeat || "none", voice: t.voice, extended: !!t.extended, duePrev: t.due_prev,
+      dueTime: t.due_time ? String(t.due_time).slice(0,5) : null, forAll: !!t.for_all };
     // Yaqinda mahalliy o'zgartirilgan vazifa (masalan hozirgina tasdiqlangan):
     // bazadan hali eski holat kelsa, mahalliy holatni saqlab qolamiz (orqaga qaytmasin).
     const p = window.__pendingTask && window.__pendingTask[String(t.id)];
@@ -2549,6 +2668,7 @@ async function loadAll(){
     lunchOut: a.lunch_out ? a.lunch_out.slice(0,5) : null,
     lateExcused: !!a.late_excused, lunchExcused: !!a.lunch_excused,
     excuseNote: a.excuse_note, excuseReq: a.excuse_req || "none",
+    excuseAt: a.excuse_at, excuseLate: !!a.excuse_late, adminExcused: !!a.admin_excused,
     inField: !!a.in_field, outField: !!a.out_field, inAppr: a.in_appr || "none", outAppr: a.out_appr || "none",
     outGeo: (a.out_lat != null && a.out_lng != null) ? a.out_lat.toFixed(5) + "," + a.out_lng.toFixed(5) : null,
     geo: (a.lat != null && a.lng != null) ? a.lat.toFixed(5) + "," + a.lng.toFixed(5) : null }));
