@@ -273,8 +273,13 @@ tr.rowhover:hover td{background:var(--surface2)}
   .clock-card .time{font-size:32px}
   .clock-card .right{margin-left:0;align-items:flex-start;width:100%}
 }
-/* Telefon: sahifa yon tomonga cho'zilmasin, LEKIN chetdagi tugmalar kesilmasin */
-html,body{overflow-x:hidden;max-width:100%}
+/* Telefon: hech narsa kesilmasin. overflow-x:hidden OLIB TASHLANDI —
+   u ekrandan chiqqan tugmalarni ko'rinmas qilib qo'yardi va ularga yetib bo'lmasdi.
+   O'rniga: har bir element ekran eniga majburan sig'diriladi. */
+html,body{max-width:100%;overflow-x:clip}
+*{min-width:0}
+.grid,.kanban,.stats{min-width:0}
+.grid>*,.kanban>*{min-width:0;max-width:100%}
 .grid.charts>*{min-width:0}
 .chart-card svg{max-width:100%}
 .pay-cards{display:none}
@@ -1566,7 +1571,9 @@ function taskActions(t){
   const isGiver = t.by && String(t.by) === String(USER.id); // vazifani bergan
   const isAdmin = USER.role === "admin";
   const canApprove = (isGiver || isAdmin) && !isOwner;
-  const canReassignTask = isOwner && USER.canReassign && t.status !== "done";
+  // Kim o'tkaza oladi: ruxsati bor mas'ul, vazifani bergan, rahbariyat, admin
+  const canReassignTask = t.status !== "done" && t.status !== "closed" &&
+    ((isOwner && USER.canReassign) || isGiver || isAdmin || isExec(USER.role));
   let btns = [];
   if (t.status === "new" && (isOwner || isAdmin))
     btns.push(`<button class="btn primary sm" onclick="moveTask('${t.id}','progress')">Boshlash</button>`);
@@ -1846,13 +1853,25 @@ function openReassign(id){
     <button class="btn primary" onclick="doReassign('${t.id}')">O'tkazish</button></div>`);
 }
 async function doReassign(id){
-  const t = TASKS.find(x => String(x.id) === String(id)); if (!t) return;
-  const to = CLOUD ? $("#raEmp").value : +$("#raEmp").value;
-  const note = $("#raNote").value.trim();
+  const t = TASKS.find(x => String(x.id) === String(id));
+  if (!t) return toast("Vazifa topilmadi");
+  const sel = $("#raEmp");
+  if (!sel) return toast("Xodim ro'yxati topilmadi — oynani yopib qayta oching");
+  if (!sel.value) return toast("Yangi mas'ulni tanlang");
+  const to = CLOUD ? sel.value : +sel.value;
+  const note = ($("#raNote") ? $("#raNote").value : "").trim();
+  toast("O'tkazilmoqda...");
   const fromName = USER.name.split(" ")[0], toName = empById(to)?.name.split(" ")[0] || "";
-  // Bir mas'ul bo'lsa — to'liq almashtiriladi; ko'p bo'lsa — o'zini yangi mas'ulga almashtiradi
-  let newEmps = taskEmps(t).map(String).filter(x => x !== String(USER.id));
-  newEmps.push(String(to));
+  const iAmDoer = isTaskDoer(t, USER.id);
+  let newEmps;
+  if (iAmDoer) {
+    // O'z mas'ulligimni yangi odamga topshiraman (boshqa mas'ullar qoladi)
+    newEmps = taskEmps(t).map(String).filter(x => x !== String(USER.id));
+    newEmps.push(String(to));
+  } else {
+    // Beruvchi/rahbariyat o'tkazyapti — butun mas'ullik yangi odamga o'tadi
+    newEmps = [String(to)];
+  }
   newEmps = [...new Set(newEmps)];
   const empsVal = newEmps.length > 1 ? newEmps : null;
   const mainEmp = newEmps[0];
@@ -1861,7 +1880,7 @@ async function doReassign(id){
       .update({ emp: mainEmp, emps: empsVal }).eq("id", t.id).select();
     if (error) return toast("Xatolik: " + error.message);
     if (!data || !data.length)
-      return toast("Ruxsat yo'q: o'tkazish huquqi bazada berilmagan. supabase-update-12.sql ni Run qiling.");
+      return toast("Bazada ruxsat yo'q. Supabase'da supabase-update-14.sql ni Run qiling.");
     await sb.from("task_comments").insert({ task: t.id, author: USER.id, text: `↪ ${fromName} vazifani ${toName}ga o'tkazdi.${note ? " " + note : ""}` });
   } else {
     COMMENTS.push({ id: Date.now(), task: t.id, author: USER.id, text: `↪ ${fromName} vazifani ${toName}ga o'tkazdi.${note ? " " + note : ""}`, at: TODAY });
