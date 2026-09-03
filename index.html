@@ -468,11 +468,13 @@ function isArchive(){ return VIEW_MONTH !== CUR_MONTH; }
 const UZ_MONTHS = ["Yanvar","Fevral","Mart","Aprel","May","Iyun","Iyul","Avgust","Sentabr","Oktabr","Noyabr","Dekabr"];
 function monthLabel(ym){ const [y,m] = (ym||VIEW_MONTH).split("-").map(Number); return `${UZ_MONTHS[m-1]} ${y}`; }
 function monthLabelLow(ym){ return monthLabel(ym).toLowerCase(); }
-/* Oxirgi 24 oy ro'yxati (tanlagich uchun) */
+/* Oy ro'yxati: ilova ishga tushgan oydan (2026-07) joriy oygacha — davomiga to'planib boradi */
+const APP_START_MONTH = "2026-07";
 function monthOptions(){
   const out = []; const d = new Date(TODAY + "T12:00:00");
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 120; i++) {
     const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    if (ym < APP_START_MONTH) break;
     out.push(ym); d.setMonth(d.getMonth() - 1);
   }
   return out;
