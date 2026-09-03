@@ -220,6 +220,12 @@ tr.rowhover:hover td{background:var(--surface2)}
 .pick-chip input{display:none}
 .pick-chip span{padding:7px 12px;border:1px solid var(--line);border-radius:99px;font-size:12.5px;cursor:pointer;background:var(--surface2)}
 .pick-chip input:checked+span{background:var(--accent);color:#fff;border-color:var(--accent)}
+.month-sel{height:36px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--text);
+  font-family:inherit;font-size:12.5px;font-weight:700;padding:0 8px;width:auto;max-width:150px;cursor:pointer}
+.month-sel.archive{border-color:var(--gold);color:var(--gold);background:var(--gold-soft, rgba(212,160,23,.12))}
+.archive-bar{background:var(--gold-soft, rgba(212,160,23,.12));border:1px solid var(--gold);color:var(--gold);
+  border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:13px;font-weight:700;display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.archive-bar .btn{margin-left:auto}
 .avatar.has-img{padding:0;overflow:hidden}
 .avatar.has-img img{width:100%;height:100%;object-fit:cover;display:block}
 .photo-edit{position:relative;display:inline-block}
@@ -397,6 +403,7 @@ img,svg,video,audio,table{max-width:100%}
         <div class="topbar">
           <div><h2 id="pageTitle"></h2><div class="sub" id="pageSub"></div></div>
           <div class="right">
+            <select id="monthSel" class="month-sel" title="Oy (arxiv)" onchange="setViewMonth(this.value)"></select>
             <div id="bellWrap" style="position:relative">
               <button class="icon-btn" onclick="toggleNotif()" title="Bildirishnomalar" style="position:relative">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 9a6 6 0 10-12 0c0 5-2 6-2 6h16s-2-1-2-6M10.3 20a2 2 0 003.4 0"/></svg>
@@ -449,6 +456,34 @@ function isoLocal(d){
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
 }
 const TODAY = CLOUD ? isoLocal(new Date()) : "2026-07-23";
+/* ===== ARXIV: ko'rilayotgan oy (YYYY-MM). Sukut — joriy oy ===== */
+let VIEW_MONTH = TODAY.slice(0,7);
+const CUR_MONTH = TODAY.slice(0,7);
+function viewMonthStart(){ return VIEW_MONTH + "-01"; }
+function viewMonthEnd(){
+  const [y,m] = VIEW_MONTH.split("-").map(Number);
+  return isoLocal(new Date(y, m, 0)); // oyning oxirgi kuni
+}
+function isArchive(){ return VIEW_MONTH !== CUR_MONTH; }
+const UZ_MONTHS = ["Yanvar","Fevral","Mart","Aprel","May","Iyun","Iyul","Avgust","Sentabr","Oktabr","Noyabr","Dekabr"];
+function monthLabel(ym){ const [y,m] = (ym||VIEW_MONTH).split("-").map(Number); return `${UZ_MONTHS[m-1]} ${y}`; }
+function monthLabelLow(ym){ return monthLabel(ym).toLowerCase(); }
+/* Oxirgi 24 oy ro'yxati (tanlagich uchun) */
+function monthOptions(){
+  const out = []; const d = new Date(TODAY + "T12:00:00");
+  for (let i = 0; i < 24; i++) {
+    const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    out.push(ym); d.setMonth(d.getMonth() - 1);
+  }
+  return out;
+}
+async function setViewMonth(ym){
+  if (!ym || ym === VIEW_MONTH) return;
+  VIEW_MONTH = ym;
+  toast(isArchive() ? `📁 Arxiv: ${monthLabel()}` : "Joriy oyga qaytildi");
+  if (CLOUD) { await loadAll(); }
+  render();
+}
 // Qisqa login: xodim "jasur" deb kiradi, kod ichkarida email ko'rinishiga keltiradi
 const LOGIN_DOMAIN = "@gmpulse.uz";
 const toEmail = l => l.includes("@") ? l : l + LOGIN_DOMAIN;
@@ -587,6 +622,11 @@ let deferredPrompt = null;
 /* ============ YORDAMCHI ============ */
 const $  = s => document.querySelector(s);
 const fmt = n => new Intl.NumberFormat("uz-UZ").format(Math.round(n)) + " so'm";
+/* Aniq pul: 137 500 (yaxlitlamaydi) — hisob-kitob va donabay uchun */
+const fmtMoney = n => {
+  const v = Math.round(n || 0), sign = v < 0 ? "−" : "";
+  return sign + String(Math.abs(v)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");  // 137 500
+};
 const fmtShort = n => {
   const a = Math.abs(n);
   if (a >= 1e6) return (n/1e6).toFixed(1).replace(".0","") + " mln";
@@ -647,9 +687,18 @@ function avatarHtml(e, cls=""){
   if (e.photo) return `<div class="avatar ${cls} has-img" style="background:${e.color}"><img src="${esc(e.photo)}" alt="" loading="lazy"></div>`;
   return `<div class="avatar ${cls}" style="background:${e.color}">${initials(e.name)}</div>`;
 }
+/* Ruxsat xatosi xabari: adminga texnik ko'rsatma, xodimlarga oddiy matn */
+function permErr(sqlFile){
+  return USER && USER.role === "admin"
+    ? `Ruxsat yo'q — Supabase'da ${sqlFile} ni Run qiling`
+    : "Bu amalni bajarishga ruxsatingiz yo'q. Administratorga murojaat qiling.";
+}
+function permErrMsg(msg, sqlFile){
+  return USER && USER.role === "admin" ? `${msg} — ${sqlFile} ni Run qiling` : "Xatolik yuz berdi. Administratorga murojaat qiling.";
+}
 /* Rasm bilan avatar + tahrirlash tugmasi (kamera belgisi) */
 function photoEditHtml(e, cls="lg"){
-  const canEdit = CLOUD && (USER.role === "admin" || String(USER.id) === String(e.id));
+  const canEdit = CLOUD && USER.role === "admin";   // rasmni faqat admin yuklaydi
   if (!canEdit) return avatarHtml(e, cls);
   return `<div class="photo-edit">${avatarHtml(e, cls)}
     <label class="cam" title="Rasm yuklash">📷
@@ -669,15 +718,24 @@ async function uploadPhoto(empId, input){
   if (error) return toast("Yuklanmadi: " + error.message);
   const { data: pub } = sb.storage.from("avatars").getPublicUrl(path);
   const url = pub.publicUrl + "?v=" + Date.now();   // kesh yangilanishi uchun
-  const { data, error: e2 } = await sb.from("profiles").update({ photo: url }).eq("id", empId).select();
-  if (e2) return toast("Saqlanmadi: " + e2.message);
-  if (!data || !data.length) return toast("Ruxsat yo'q — supabase-update-15.sql ni Run qiling");
+  if (USER.role === "admin") {
+    // Admin — to'g'ridan-to'g'ri yozadi
+    const { data, error: e2 } = await sb.from("profiles").update({ photo: url }).eq("id", empId).select();
+    if (e2) return toast("Saqlanmadi: " + e2.message);
+    if (!data || !data.length) return toast(permErr("supabase-update-15.sql"));
+  } else {
+    // Xodim — faqat O'Z rasmini, xavfsiz funksiya orqali (boshqa maydonlarga tegmaydi)
+    const { error: e2 } = await sb.rpc("set_my_photo", { url });
+    if (e2) return toast(permErrMsg("Saqlanmadi: " + e2.message, "supabase-update-16.sql"));
+  }
   const emp = empById(empId); if (emp) emp.photo = url;
   if (String(USER.id) === String(empId)) USER.photo = url;
   toast("Rasm yangilandi ✓"); render();
 }
 async function removePhoto(empId){
-  const { error } = await sb.from("profiles").update({ photo: null }).eq("id", empId);
+  const { error } = USER.role === "admin"
+    ? await sb.from("profiles").update({ photo: null }).eq("id", empId)
+    : await sb.rpc("set_my_photo", { url: null });
   if (error) return toast("Xatolik: " + error.message);
   const emp = empById(empId); if (emp) emp.photo = null;
   if (String(USER.id) === String(empId)) USER.photo = null;
@@ -753,8 +811,9 @@ function workedHours(a){
   let h = (effOut - effIn) / 60 - lunch / 60;
   return Math.max(0, h);
 }
-function empAttendance(id){ return ATTENDANCE.filter(a => a.emp === id); }
-function empFB(id){ return FINEBONUS.filter(f => f.emp === id); }
+function inViewMonth(d){ return d && d.slice(0,7) === VIEW_MONTH; }
+function empAttendance(id){ return ATTENDANCE.filter(a => String(a.emp) === String(id) && inViewMonth(a.date)); }
+function empFB(id){ return FINEBONUS.filter(f => String(f.emp) === String(id) && inViewMonth(f.date)); }
 function sumFB(id, type){
   return empFB(id).filter(f => f.type === type).reduce((s,f) => s + f.amount, 0);
 }
@@ -986,7 +1045,7 @@ function exportPayroll(){
                r.diff.toFixed(1), Math.round(r.base), r.bonus, Math.round(r.total),
                Math.round(r.lateFine), Math.round(r.manualFine), Math.round(r.fine)]);
   });
-  downloadCSV("hisob-kitob_iyul-2026", rows);
+  downloadCSV("hisob-kitob_" + VIEW_MONTH, rows);
 }
 function exportAttendance(){
   const ids = scopeEmployees().map(e=>e.id);
@@ -994,7 +1053,7 @@ function exportAttendance(){
   ATTENDANCE.filter(a => ids.includes(a.emp)).forEach(a => {
     rows.push([empById(a.emp).name, a.date, a.in, a.out ?? "", a.out ? workedHours(a).toFixed(1) : "", a.late ? "ha" : "yo'q"]);
   });
-  downloadCSV("davomat_iyul-2026", rows);
+  downloadCSV("davomat_" + VIEW_MONTH, rows);
 }
 
 /* =====================================================
@@ -1090,11 +1149,11 @@ function pgProfile(){
   // Pul ko'rsatkichlari: admin/rahbar har kimni; boshliq esa FAQAT o'zini ko'radi
   const seeMoney = USER.role === "admin" || isExec(USER.role) || String(e.id) === String(USER.id);
   const moneyCards = seeMoney ? `
-      <div class="card stat"><div class="lbl">${IC.money} Maosh (jarimasiz)</div><div class="val num">${fmtShort(earn.total)}</div>
-        <div class="delta" style="color:var(--muted)">oylik ${fmtShort(e.salary)} · bonus qo'shilgan</div></div>
+      <div class="card stat"><div class="lbl">${IC.money} Maosh (jarimasiz)</div><div class="val num" style="font-size:19px">${fmtMoney(earn.total)}</div>
+        <div class="delta" style="color:var(--muted)">oylik ${fmtMoney(e.salary)} · bonus qo'shilgan</div></div>
       <div class="card stat"><div class="lbl">${IC.down} Jarima (alohida)</div>
-        <div class="val num" style="color:var(--danger)">${earn.fine?"−"+fmtShort(earn.fine):"yo'q"}</div>
-        <div class="delta" style="color:var(--muted)">${earn.lateFine?`kechikish ${fmtShort(earn.lateFine)}`:""}${earn.lateFine&&earn.manualFine?" · ":""}${earn.manualFine?`qo'lda ${fmtShort(earn.manualFine)}`:""}</div></div>` : "";
+        <div class="val num" style="color:var(--danger);font-size:19px">${earn.fine?"−"+fmtMoney(earn.fine):"yo'q"}</div>
+        <div class="delta" style="color:var(--muted)">${earn.lateFine?`kechikish ${fmtMoney(earn.lateFine)}`:""}${earn.lateFine&&earn.manualFine?" · ":""}${earn.manualFine?`qo'lda ${fmtMoney(earn.manualFine)}`:""}</div></div>` : "";
   return `
     <div class="card" style="padding:18px;display:flex;gap:15px;align-items:center;flex-wrap:wrap;margin-bottom:15px">
       <button class="btn ghost sm" onclick="go('employees')">← Orqaga</button>
@@ -1132,7 +1191,28 @@ function pgProfile(){
 }
 // Profil ochilganda hujjatlar ro'yxatini yuklash
 const _origRender = render;
+function pageSubWithMonth(){
+  const el = document.getElementById("pageSub"); if (!el) return;
+  if (["dashboard","attendance","payroll","finebonus","rating","piece"].includes(PAGE))
+    el.textContent = (isArchive() ? "📁 " : "") + monthLabel() + " · " + (el.textContent || "");
+}
+function fillMonthSel(){
+  const sel = document.getElementById("monthSel"); if (!sel) return;
+  sel.innerHTML = monthOptions().map(ym => `<option value="${ym}" ${ym===VIEW_MONTH?"selected":""}>${ym===CUR_MONTH?"📅 ":"📁 "}${monthLabel(ym)}</option>`).join("");
+  sel.classList.toggle("archive", isArchive());
+}
+function archiveBar(){
+  if (!isArchive()) return "";
+  return `<div class="archive-bar">📁 Arxiv rejimi — <b>${monthLabel()}</b> ma'lumotlari (faqat ko'rish)
+    <button class="btn ghost sm" onclick="setViewMonth(CUR_MONTH)">Joriy oyga qaytish</button></div>`;
+}
 render = function(){ _origRender();
+  fillMonthSel(); pageSubWithMonth();
+  // Arxiv banneri: oyga bog'liq sahifalarda
+  if (isArchive() && ["dashboard","me","attendance","payroll","finebonus","rating","piece"].includes(PAGE)) {
+    const pg = document.getElementById("page");
+    if (pg && !pg.querySelector(".archive-bar")) pg.insertAdjacentHTML("afterbegin", archiveBar());
+  }
   if (PAGE === "profile" && CLOUD) loadDocs(PROFILE_ID);
   if (PAGE === "me" && CLOUD) loadDocs(USER.id);
   if (PAGE === "rating" && CLOUD) loadRating();
@@ -1240,7 +1320,7 @@ async function uploadDoc(empId, input){
       .upsert({ emp: empId, doc_types: picked, doc_type: picked[0], file: stamped }, { onConflict: "emp,file" })
       .select();
     if (e2) { toast("Turlar belgilanmadi: " + e2.message); }
-    else if (!d2 || !d2.length) { toast("Turlar yozilmadi — supabase-update-15.sql ni Run qiling"); }
+    else if (!d2 || !d2.length) { toast(permErrMsg("Turlar yozilmadi", "supabase-update-15.sql")); }
     else {
       // Mahalliy ro'yxatni darrov yangilaymiz (bazani kutmasdan)
       EMP_DOCS = EMP_DOCS.filter(x => !(String(x.emp)===String(empId) && x.file===stamped));
@@ -1269,10 +1349,9 @@ async function deleteDoc(empId, name){
 let PIECE_JOBS = [], PIECE_ENTRIES = [];
 async function loadPiece(){
   if (!CLOUD) return;
-  const from = monthStartIso();
   const [pj, pe] = await Promise.all([
     sb.from("piece_jobs").select("*").order("sort"),
-    sb.from("piece_entries").select("*").gte("date", from).order("date", { ascending:false }),
+    sb.from("piece_entries").select("*").gte("date", viewMonthStart()).lte("date", viewMonthEnd()).order("date", { ascending:false }),
   ]);
   if (pj.data) PIECE_JOBS = pj.data.map(j => ({ id:j.id, name:j.name, price:+j.price, unit:j.unit||"dona", active:j.active, sort:j.sort }));
   if (pe.data) PIECE_ENTRIES = pe.data.map(x => ({ id:x.id, emp:x.emp, date:x.date, job:x.job, qty:+x.qty, price:+x.price, note:x.note }));
@@ -1308,19 +1387,19 @@ function pgPiece(){
     const monthSum = pieceTotal(USER.id);
     return `
     <div class="grid stats" style="margin-bottom:15px">
-      <div class="card stat"><div class="lbl">${IC.money} Bugun</div><div class="val num">${fmtShort(todaySum)}</div>
+      <div class="card stat"><div class="lbl">${IC.money} Bugun</div><div class="val num">${fmtMoney(todaySum)}</div>
         <div class="delta" style="color:var(--muted)">${today.length} ta yozuv</div></div>
-      <div class="card stat"><div class="lbl">${IC.up} Shu oy jami</div><div class="val num" style="color:var(--success)">${fmtShort(monthSum)}</div>
+      <div class="card stat"><div class="lbl">${IC.up} Shu oy jami</div><div class="val num" style="color:var(--success)">${fmtMoney(monthSum)}</div>
         <div class="delta" style="color:var(--muted)">donabay ish haqi</div></div>
     </div>
-    <div class="card" style="padding:16px;margin-bottom:15px">
-      <b style="font-size:14px">➕ Bugungi ishni yozish</b>
+    ${isArchive() ? "" : `<div class="card" style="padding:16px;margin-bottom:15px">
+      <b style="font-size:14px">➕ Bugungi ishni yozish</b>`}
       <div style="font-size:12px;color:var(--muted);margin:5px 0 11px">Kechqurun qaysi ishdan nechta qilganingizni kiriting</div>
       ${PIECE_JOBS.filter(j=>j.active).length ? `
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
           <div style="flex:2;min-width:170px"><label>Ish turi</label>
             <select id="peJob">${PIECE_JOBS.filter(j=>j.active).map(j=>`
-              <option value="${j.id}">${esc(j.name)} — ${fmtShort(j.price)}/${esc(j.unit)}</option>`).join("")}</select></div>
+              <option value="${j.id}">${esc(j.name)} — ${fmtMoney(j.price)}/${esc(j.unit)}</option>`).join("")}</select></div>
           <div style="flex:1;min-width:95px"><label>Soni</label>
             <input id="peQty" type="number" min="0" step="1" value="1"></div>
           <div style="flex:2;min-width:150px"><label>Sana</label>
@@ -1328,8 +1407,8 @@ function pgPiece(){
           <button class="btn primary" onclick="addPiece()">Qo'shish</button>
         </div>`
         : `<div class="empty">Ishlar ro'yxati hali kiritilmagan — admin qo'shishi kerak</div>`}
-    </div>
-    <h3 class="section-title">Mening yozuvlarim</h3>
+    ${isArchive() ? "" : "</div>"}
+    <h3 class="section-title">${isArchive() ? monthLabel() + " yozuvlarim" : "Mening yozuvlarim"}</h3>
     ${pieceTable(USER.id, true)}` ;
   })() : "";
 
@@ -1343,7 +1422,7 @@ function pgPiece(){
       return `<div class="fb-item" style="cursor:pointer" onclick="openPieceEmp('${e.id}')">
         ${avatarHtml(e,"sm")}
         <div class="meta"><b>${esc(e.name)}</b><span>${esc(e.pos)} · ${cnt} ta yozuv</span></div>
-        <div class="amount num" style="color:var(--success)">${fmtShort(sum)}</div></div>`;
+        <div class="amount num" style="color:var(--success)">${fmtMoney(sum)}</div></div>`;
     }).join("")}</div>` : "";
 
   if (!me && !others.length && !isAdmin)
@@ -1362,12 +1441,12 @@ function pieceTable(empId, own){
     return `<div class="card" style="margin-bottom:10px">
       <div style="display:flex;align-items:center;gap:9px;padding:11px 15px;border-bottom:1px solid var(--line)">
         <b style="font-size:13.5px">${uzDate(date)}</b>
-        <span class="num" style="margin-left:auto;font-weight:800;color:var(--success)">${fmtShort(sum)}</span></div>
+        <span class="num" style="margin-left:auto;font-weight:800;color:var(--success)">${fmtMoney(sum)}</span></div>
       ${list.map(x => { const j = PIECE_JOBS.find(y=>String(y.id)===String(x.job));
         return `<div class="fb-item">
           <div class="fb-icon" style="background:var(--accent-soft);color:var(--accent)">📦</div>
-          <div class="meta"><b>${j?esc(j.name):"—"}</b><span>${x.qty} ${j?esc(j.unit):"dona"} × ${fmtShort(x.price)}</span></div>
-          <div class="amount num">${fmtShort(x.qty*x.price)}</div>
+          <div class="meta"><b>${j?esc(j.name):"—"}</b><span>${x.qty} ${j?esc(j.unit):"dona"} × ${fmtMoney(x.price)}</span></div>
+          <div class="amount num">${fmtMoney(x.qty*x.price)}</div>
           ${(own || USER.role==="admin") ? `<button class="btn sm" style="color:var(--danger)" onclick="delPiece('${x.id}')">✕</button>` : ""}
         </div>`; }).join("")}
     </div>`;
@@ -1376,7 +1455,7 @@ function pieceTable(empId, own){
 function openPieceEmp(empId){
   const e = empById(empId); if (!e || !canSeePiece(empId)) return;
   openModal(`<h3>${esc(e.name)} — donabay ish</h3>
-    <div class="sub">Shu oy jami: <b style="color:var(--success)">${fmtShort(pieceTotal(empId))}</b></div>
+    <div class="sub">Shu oy jami: <b style="color:var(--success)">${fmtMoney(pieceTotal(empId))}</b></div>
     <div style="margin-top:12px;max-height:55vh;overflow-y:auto">${pieceTable(empId, false)}</div>
     <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
 }
@@ -1393,7 +1472,7 @@ async function addPiece(){
     rec.id = data.id;
   } else rec.id = Date.now();
   PIECE_ENTRIES.push(rec);
-  toast(`${esc(job.name)}: ${qty} ${job.unit} = ${fmtShort(qty*job.price)} qo'shildi ✓`);
+  toast(`${esc(job.name)}: ${qty} ${job.unit} = ${fmtMoney(qty*job.price)} qo'shildi ✓`);
   render();
 }
 async function delPiece(id){
@@ -1411,7 +1490,7 @@ function openPieceJobs(){
     <div style="margin-top:12px">${PIECE_JOBS.map(j=>`
       <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px;font-size:13px">
         <span style="flex:1">${esc(j.name)}</span>
-        <b class="num">${fmtShort(j.price)}</b><span style="font-size:11px;color:var(--muted)">/${esc(j.unit)}</span>
+        <b class="num">${fmtMoney(j.price)}</b><span style="font-size:11px;color:var(--muted)">/${esc(j.unit)}</span>
         <button class="btn sm" style="color:var(--danger)" onclick="delPieceJob('${j.id}')">✕</button>
       </div>`).join("") || `<div class="empty" style="padding:10px">Ro'yxat bo'sh</div>`}</div>
     <div style="border-top:1px solid var(--line);padding-top:12px;margin-top:12px">
@@ -1510,8 +1589,8 @@ function pgRating(){
 }
 async function loadRating(){
   const el = document.getElementById("ratingList"); if (!el) return;
-  const { data, error } = await sb.rpc("rating_data");
-  if (error) { el.innerHTML = `<div class="empty">Yuklanmadi: ${esc(error.message)}<br>supabase-update-2.sql bajarilganini tekshiring</div>`; return; }
+  const { data, error } = await sb.rpc("rating_data", { p_month: viewMonthStart() });
+  if (error) { el.innerHTML = `<div class="empty">${USER.role==='admin' ? 'Yuklanmadi: '+esc(error.message)+'<br>supabase-update-15.sql bajarilganini tekshiring' : 'Reyting hozircha mavjud emas'}</div>`; return; }
   const list = (data || []).map(r => ({ ...r, kpi: kpiFromNums(r) }))
     .sort((a,b) => ((a.t_total||a.days)?0:1) - ((b.t_total||b.days)?0:1) || b.kpi - a.kpi || b.hours - a.hours);
   el.innerHTML = ratingRows(list) || `<div class="empty">Ma'lumot yo'q</div>`;
@@ -1531,14 +1610,14 @@ function pgPayroll(){
     return `<tr class="rowhover">
       <td><div style="display:flex;align-items:center;gap:9px">${avatarHtml(e,"sm")}
         <div><b style="font-size:13.5px">${esc(e.name)}</b><br><span style="font-size:11.5px;color:var(--muted)">${esc(e.pos)}</span></div></div></td>
-      <td class="num">${fmtShort(e.salary)}</td>
+      <td class="num">${fmtMoney(e.salary)}</td>
       <td class="num" style="color:var(--muted)">${new Intl.NumberFormat("uz-UZ").format(Math.round(r.hourRate))}</td>
       <td class="num">${r.hours.toFixed(1)} / ${r.planSoFar}</td>
       <td>${diffCell(r.diff)}</td>
-      <td class="num">${fmtShort(r.base)}</td>
-      <td class="num" style="color:var(--success)">+${fmtShort(r.bonus)}</td>
-      <td class="num"><b>${fmtShort(r.total)}</b></td>
-      <td class="num" style="color:var(--danger)">${r.fine ? "−"+fmtShort(r.fine) : "—"}</td>
+      <td class="num">${fmtMoney(r.base)}</td>
+      <td class="num" style="color:var(--success)">+${fmtMoney(r.bonus)}</td>
+      <td class="num"><b>${fmtMoney(r.total)}</b></td>
+      <td class="num" style="color:var(--danger)">${r.fine ? "−"+fmtMoney(r.fine) : "—"}</td>
     </tr>`;
   }).join("");
   const totals = scope.reduce((s,e)=>{ const r=earnedToDate(e);
@@ -1552,22 +1631,22 @@ function pgPayroll(){
     <div class="filters"><button class="btn ghost sm" onclick="exportPayroll()">⬇ Excel (CSV) yuklab olish</button></div>
     <div class="pay-cards">${scope.map(e => { const r = earnedToDate(e); return `
       <div class="card pay-card">
-        <div class="top">${avatarHtml(e,"sm")}<div><b>${esc(e.name)}</b><span>oylik ${fmtShort(e.salary)}</span></div>
-          <div class="net num">${fmtShort(r.total)}<br><span style="font-size:10px;color:var(--muted);font-weight:600">maosh (jarimasiz)</span></div></div>
+        <div class="top">${avatarHtml(e,"sm")}<div><b>${esc(e.name)}</b><span>oylik ${fmtMoney(e.salary)}</span></div>
+          <div class="net num">${fmtMoney(r.total)}<br><span style="font-size:10px;color:var(--muted);font-weight:600">maosh (jarimasiz)</span></div></div>
         <div class="rows">
           <div><b class="num">${r.hours.toFixed(1)} / ${r.planSoFar}</b><span>SOAT / REJA</span></div>
           <div><b class="num" style="color:${r.diff>=0?"var(--success)":"var(--danger)"}">${r.diff>=0?"+":"−"}${Math.abs(r.diff).toFixed(1)} soat</b><span>FARQ</span></div>
-          <div><b class="num" style="color:var(--success)">+${fmtShort(r.bonus)}</b><span>BONUS</span></div>
-          <div><b class="num" style="color:var(--danger)">${r.fine?fmtShort(r.fine):"—"}</b><span>JARIMA (ALOHIDA)</span></div>
+          <div><b class="num" style="color:var(--success)">+${fmtMoney(r.bonus)}</b><span>BONUS</span></div>
+          <div><b class="num" style="color:var(--danger)">${r.fine?fmtMoney(r.fine):"—"}</b><span>JARIMA (ALOHIDA)</span></div>
         </div></div>`; }).join("")}</div>
     <div class="card t-wrap pay-table"><table>
       <tr><th>Xodim</th><th>Oylik maosh</th><th>Soatlik (so'm)</th><th>Ishlagan / reja soat</th><th>Farq</th><th>Hisoblangan</th><th>Bonus</th><th>Maosh (jarimasiz)</th><th>Jarima (alohida)</th></tr>
       ${rows}
       <tr style="background:var(--surface2)"><td><b>Jami</b></td><td></td><td></td><td></td><td></td>
-        <td class="num"><b>${fmtShort(totals.base)}</b></td>
-        <td class="num" style="color:var(--success)"><b>+${fmtShort(totals.bonus)}</b></td>
-        <td class="num" style="color:var(--danger)"><b>−${fmtShort(totals.fine)}</b></td>
-        <td class="num"><b>${fmtShort(totals.total)}</b></td></tr>
+        <td class="num"><b>${fmtMoney(totals.base)}</b></td>
+        <td class="num" style="color:var(--success)"><b>+${fmtMoney(totals.bonus)}</b></td>
+        <td class="num" style="color:var(--danger)"><b>−${fmtMoney(totals.fine)}</b></td>
+        <td class="num"><b>${fmtMoney(totals.total)}</b></td></tr>
     </table></div>`;
 }
 
@@ -1595,8 +1674,8 @@ function pgDashboard(){
     </div>` : `
     <div class="grid stats">
       <div class="card stat"><div class="lbl">${IC.users} Xodimlar</div><div class="val num">${scope.length}</div><div class="delta" style="color:var(--muted)">${scopeLabel}</div></div>
-      <div class="card stat"><div class="lbl">${IC.up} Jami bonuslar</div><div class="val num" style="color:var(--success)">+${fmtShort(bonus)}</div><div class="delta" style="color:var(--muted)">iyul oyi</div></div>
-      <div class="card stat"><div class="lbl">${IC.down} Jami jarimalar</div><div class="val num" style="color:var(--danger)">−${fmtShort(fine)}</div><div class="delta" style="color:var(--muted)">iyul oyi</div></div>
+      <div class="card stat"><div class="lbl">${IC.up} Jami bonuslar</div><div class="val num" style="color:var(--success)">+${fmtShort(bonus)}</div><div class="delta" style="color:var(--muted)">${monthLabelLow()}</div></div>
+      <div class="card stat"><div class="lbl">${IC.down} Jami jarimalar</div><div class="val num" style="color:var(--danger)">−${fmtShort(fine)}</div><div class="delta" style="color:var(--muted)">${monthLabelLow()}</div></div>
       <div class="card stat"><div class="lbl">${IC.money} Sof to'lov fondi</div><div class="val num">${fmtShort(payroll)}</div><div class="delta" style="color:var(--muted)">oy boshidan hisoblangan</div></div>
       <div class="card stat"><div class="lbl">${IC.dash} O'rtacha samaradorlik</div><div class="val num">${avgEff}%</div><div class="delta" style="color:${pending? "var(--gold)":"var(--muted)"}">${pending? pending+" ta vazifa tasdiq kutmoqda":"tasdiq kutayotgan vazifa yo'q"}</div></div>
     </div>`;
@@ -1700,15 +1779,17 @@ function personalBlock(e){
         <div class="time num" id="liveClock">--:--</div>
         <div class="date">${CLOUD ? new Date().toLocaleDateString("uz-UZ",{weekday:"long",day:"numeric",month:"long",year:"numeric"}) : "Payshanba, 23-iyul 2026"} · ish vaqti 9:00–18:00 · obed 13:00–14:00</div>
       </div>
-      <div class="right">${fieldToday}${checkBtn}${leaveBtn}</div>
+      <div class="right">${isArchive()
+        ? `<span class="tag gold">📁 ${monthLabel()} arxivi — belgilash faqat joriy oyda</span>`
+        : fieldToday + checkBtn + leaveBtn}</div>
     </div>
     <div class="grid stats">
-      <div class="card stat"><div class="lbl">${IC.money} Oy boshidan topilgan</div><div class="val num">${fmtShort(earn.total)}</div>
-        <div class="delta" style="color:var(--muted)">oylik ${fmtShort(e.salary)} · soatlik ${new Intl.NumberFormat("uz-UZ").format(Math.round(earn.hourRate))} so'm</div></div>
+      <div class="card stat"><div class="lbl">${IC.money} Oy boshidan topilgan</div><div class="val num">${fmtMoney(earn.total)}</div>
+        <div class="delta" style="color:var(--muted)">oylik ${fmtMoney(e.salary)} · soatlik ${new Intl.NumberFormat("uz-UZ").format(Math.round(earn.hourRate))} so'm</div></div>
       <div class="card stat"><div class="lbl">${IC.clock} Ishlagan soat</div><div class="val num">${earn.hours.toFixed(1)}</div>
         <div class="delta" style="color:${earn.diff>=0?"var(--success)":"var(--danger)"}">reja ${earn.planSoFar} soat · ${earn.diff>=0?"+":"−"}${Math.abs(earn.diff).toFixed(1)} soat</div></div>
-      <div class="card stat"><div class="lbl">${IC.up} Bonuslar</div><div class="val num" style="color:var(--success)">+${fmtShort(earn.bonus)}</div></div>
-      <div class="card stat"><div class="lbl">${IC.down} Jarimalar</div><div class="val num" style="color:var(--danger)">−${fmtShort(earn.fine)}</div>
+      <div class="card stat"><div class="lbl">${IC.up} Bonuslar</div><div class="val num" style="color:var(--success)">+${fmtMoney(earn.bonus)}</div></div>
+      <div class="card stat"><div class="lbl">${IC.down} Jarimalar</div><div class="val num" style="color:var(--danger)">−${fmtMoney(earn.fine)}</div>
         <div class="delta" style="color:var(--muted)">${lateCount} marta kechikish</div></div>
       <div class="card stat"><div class="lbl">${IC.dash} Samaradorlik</div><div class="val num">${eff}%</div></div>
     </div>
@@ -1731,7 +1812,7 @@ function personalBlock(e){
               if (a.lateExcused || a.lunchExcused) lateTag = `<span class="tag info">sababli ✓</span>`;
               else if (a.excuseReq === "pending") lateTag = `<span class="tag gold">sabab yuborildi</span>`;
               else {
-                const f = FINE_PER_MIN ? ` · ${fmtShort((lm+llm)*FINE_PER_MIN)}` : "";
+                const f = FINE_PER_MIN ? ` · ${fmtMoney((lm+llm)*FINE_PER_MIN)}` : "";
                 lateTag = `<span class="tag danger">kech ${lm+llm} daq${f}</span>`;
               }
             }
@@ -1762,7 +1843,7 @@ function personalBlock(e){
         <div class="emp-mini">
           <div><b class="num">${roleLabel(e.role)}</b><span>LAVOZIM TURI</span></div>
           <div><b class="num">${e.login?esc(e.login):"—"}</b><span>LOGIN</span></div>
-          <div><b class="num">${fmtShort(e.salary)}</b><span>OYLIK</span></div>
+          <div><b class="num">${fmtMoney(e.salary)}</b><span>OYLIK</span></div>
         </div>
         <div style="margin-top:12px">${contractTag(e.contract)}</div>
         ${e.fieldWork?'<div style="margin-top:7px"><span class="tag info">Tashqaridan keldim/ketdim bosa oladi</span></div>':""}
@@ -1807,8 +1888,8 @@ function pgEmployees(){
       <div class="emp-mini">
         ${(USER.role==="admin"||USER.role==="rahbar") ? `
           <div><b class="num">${effDetail(e.id).noData?"—":efficiency(e.id)+"%"}</b><span>KPI</span></div>
-          <div><b class="num" style="color:var(--success)">+${fmtShort(earn.bonus)}</b><span>Bonus</span></div>
-          <div><b class="num" style="color:var(--danger)">−${fmtShort(earn.fine)}</b><span>Jarima</span></div>`
+          <div><b class="num" style="color:var(--success)">+${fmtMoney(earn.bonus)}</b><span>Bonus</span></div>
+          <div><b class="num" style="color:var(--danger)">−${fmtMoney(earn.fine)}</b><span>Jarima</span></div>`
         : `
           <div><b class="num">${effDetail(e.id).noData?"—":efficiency(e.id)+"%"}</b><span>KPI</span></div>
           <div><b class="num">${effDetail(e.id).tDone}/${effDetail(e.id).tTotal}</b><span>Vazifa</span></div>
@@ -2057,7 +2138,7 @@ async function moveTask(id, status, returned=false){
       if (error) { t.status = prev; render(); return toast("Xatolik: " + error.message); }
       if (!data || !data.length) {
         t.status = prev; delete window.__pendingTask[String(t.id)]; render();
-        return toast("Ruxsat yo'q: bazada bu amal uchun huquq berilmagan (supabase-update-9.sql).");
+        return toast(permErr("supabase-update-9.sql"));
       }
     }
     if (status === "review") toast("Vazifa tasdiqqa yuborildi");
@@ -2167,7 +2248,7 @@ async function doReassign(id){
       .update({ emp: mainEmp, emps: empsVal }).eq("id", t.id).select();
     if (error) return toast("Xatolik: " + error.message);
     if (!data || !data.length)
-      return toast("Bazada ruxsat yo'q. Supabase'da supabase-update-14.sql ni Run qiling.");
+      return toast(permErr("supabase-update-14.sql"));
     await sb.from("task_comments").insert({ task: t.id, author: USER.id, text: `↪ ${fromName} vazifani ${toName}ga o'tkazdi.${note ? " " + note : ""}` });
   } else {
     COMMENTS.push({ id: Date.now(), task: t.id, author: USER.id, text: `↪ ${fromName} vazifani ${toName}ga o'tkazdi.${note ? " " + note : ""}`, at: TODAY });
@@ -2196,7 +2277,7 @@ async function closeTask(id){
       .update({ status: "closed", repeat: "none", done_at: TODAY }).eq("id", t.id).select();
     if (error) { Object.assign(t, prev); render(); return toast("Xatolik: " + error.message); }
     if (!data || !data.length) { Object.assign(t, prev); render();
-      return toast("Ruxsat yo'q — supabase-update-13.sql ni Run qiling"); }
+      return toast(permErr("supabase-update-13.sql")); }
   }
   t.doneAt = TODAY;
   closeModal(); toast(isRep ? "Vazifa butunlay yopildi ✖ takrorlanish ham to'xtatildi" : "Vazifa yopildi ✖");
@@ -2212,7 +2293,7 @@ async function stopRepeat(id){
   if (CLOUD) {
     const { data, error } = await sb.from("tasks").update({ repeat: "none" }).eq("id", t.id).select();
     if (error) { t.rep = prev; return toast("Xatolik: " + error.message); }
-    if (!data || !data.length) { t.rep = prev; return toast("Ruxsat yo'q — supabase-update-9.sql ni Run qiling"); }
+    if (!data || !data.length) { t.rep = prev; return toast(permErr("supabase-update-9.sql")); }
   }
   closeModal(); toast("Takrorlanish to'xtatildi ⏹ — bu vazifa oxirgisi"); render();
 }
@@ -2245,7 +2326,7 @@ async function approveTask(id){
         t.status = "review"; t.doneAt = null;
         delete window.__pendingTask[String(t.id)];
         render();
-        return toast("Ruxsat yo'q: bazada tasdiqlash huquqi berilmagan. supabase-update-9.sql ni Supabase'da Run qiling.");
+        return toast(permErr("supabase-update-9.sql"));
       }
     }
     if (t.rep && t.rep !== "none") {
@@ -2307,7 +2388,7 @@ function pgAttendance(){
           ${(() => { const lm = Math.max(0, minutes(a.in) - minutes(WORK_START));
             if (!lm) return '<span class="tag success">vaqtida</span>';
             if (a.lateExcused) return `<span class="tag info" title="${esc(a.excuseNote||"")}">kech ${lm} daq · sababli ✓</span>`;
-            const f = FINE_PER_MIN ? ` · ${fmtShort(lm*FINE_PER_MIN)}` : "";
+            const f = FINE_PER_MIN ? ` · ${fmtMoney(lm*FINE_PER_MIN)}` : "";
             return `<span class="tag danger">kech ${lm} daq${f}</span>`; })()}
           ${isFieldDay(a.emp,a.date)?'<span class="tag info">ruxsatli tashqarida</span>':""}
           ${fieldTag(a.inField, a.inAppr, a.emp, a.date, "in")}
@@ -2330,7 +2411,7 @@ function pgAttendance(){
           ${(() => { const llm = a.lunchBack ? Math.max(0, minutes(a.lunchBack) - minutes(LUNCH_END)) : 0;
             if (!llm) return "";
             if (a.lunchExcused) return `<span class="tag info">obed +${llm} daq · sababli ✓</span>`;
-            const f = FINE_PER_MIN ? ` · ${fmtShort(llm*FINE_PER_MIN)}` : "";
+            const f = FINE_PER_MIN ? ` · ${fmtMoney(llm*FINE_PER_MIN)}` : "";
             return `<span class="tag danger">obed +${llm} daq${f}</span>`; })()}
           ${fieldTag(a.outField, a.outAppr, a.emp, a.date, "out")}</div>
         <div><span class="sub2">SOAT</span><b class="num">${a.out ? workedHours(a).toFixed(1) : "—"}</b></div>
@@ -2383,7 +2464,7 @@ function pgAttendance(){
     <div class="filters">
       <span class="tag muted">Ish vaqti: 9:00–18:00 · obed 13:00–14:00 · reja 26 kun × 8 soat</span>
       ${USER.role!=="xodim" ? '<button class="btn ghost sm" onclick="exportAttendance()">⬇ Excel (CSV)</button>' : ""}
-      ${isAdmin ? '<button class="btn ghost sm" onclick="openAttModal()">+ Yozuv qo\'shish</button>' : ""}
+      ${isAdmin && !isArchive() ? '<button class="btn ghost sm" onclick="openAttModal()">+ Yozuv qo\'shish</button>' : ""}
       ${CLOUD ? '<button class="btn ghost sm" onclick="refreshNow()">🔄 Yangilash</button>' : ""}
     </div>
     ${days || '<div class="card empty">Davomat yozuvlari yo\'q</div>'}`;
@@ -2696,7 +2777,7 @@ function openFineSettings(){
     <label>1 daqiqa uchun (so'm)</label>
     <input id="fpm" type="number" min="0" step="100" value="${FINE_PER_MIN}">
     <div style="font-size:12px;color:var(--muted);margin-top:8px">
-      Misol: 1000 so'm × 15 daqiqa kechikish = ${fmtShort(15000)} jarima.<br>
+      Misol: 1000 so'm × 15 daqiqa kechikish = ${fmtMoney(15000)} jarima.<br>
       Sababi tasdiqlangan kechikishlarga jarima yozilmaydi.</div>
     <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor</button>
     <button class="btn primary" onclick="saveFineSettings()">Saqlash</button></div>`);
@@ -2708,7 +2789,7 @@ async function saveFineSettings(){
     if (error) return toast("Xatolik: " + error.message);
   }
   FINE_PER_MIN = v;
-  closeModal(); toast(v ? `Jarima: ${fmtShort(v)}/daqiqa` : "Avtomatik jarima o'chirildi"); render();
+  closeModal(); toast(v ? `Jarima: ${fmtMoney(v)}/daqiqa` : "Avtomatik jarima o'chirildi"); render();
 }
 
 const LEAVE_MIN_HOURS = 3; // ruxsat kamida shuncha soat OLDIN so'ralishi kerak
@@ -2716,8 +2797,9 @@ let LEAVE_REQS = [];       // oldindan ruxsat so'rovlari
 
 async function loadLeaves(){
   if (!CLOUD) return;
-  const from = isoLocal(new Date(Date.now() - 30*86400000));
-  const { data } = await sb.from("leave_requests").select("*").gte("date", from).order("date", { ascending:false });
+  const from = isArchive() ? viewMonthStart() : isoLocal(new Date(Date.now() - 30*86400000));
+  const to = isArchive() ? viewMonthEnd() : isoLocal(new Date(Date.now() + 60*86400000));
+  const { data } = await sb.from("leave_requests").select("*").gte("date", from).lte("date", to).order("date", { ascending:false });
   if (data) LEAVE_REQS = data.map(r => ({ id:r.id, emp:r.emp, date:r.date, kind:r.kind,
     fromTime:r.from_time ? String(r.from_time).slice(0,5) : null, reason:r.reason,
     status:r.status, requestedAt:r.requested_at }));
@@ -2796,7 +2878,7 @@ async function decideLeave(id, status){
     const { data, error } = await sb.from("leave_requests")
       .update({ status, decided_by: USER.id, decided_at: new Date().toISOString() }).eq("id", r.id).select();
     if (error) return toast("Xatolik: " + error.message);
-    if (!data || !data.length) return toast("Ruxsat yo'q — supabase-update-12.sql ni Run qiling");
+    if (!data || !data.length) return toast(permErr("supabase-update-12.sql"));
   }
   r.status = status;
   toast(status === "approved" ? "Ruxsat berildi ✓ — kechikish hisobga olinmaydi va jarima yozilmaydi" : "Ruxsat rad etildi");
@@ -2813,7 +2895,7 @@ function openFineEdit(emp, date){
     <div class="sub">${esc(empById(emp)?.name||"")} · ${uzDate(date)}</div>
     <div style="background:var(--surface2);border-radius:12px;padding:11px 13px;margin:11px 0;font-size:12.5px">
       Kechikish: <b>${lateMinutes(a)} daq</b>${lunchLateMinutes(a)?` · obed: <b>${lunchLateMinutes(a)} daq</b>`:""}<br>
-      Avtomatik hisob: <b>${fmtShort(auto)}</b> (${fmtShort(FINE_PER_MIN)}/daqiqa)
+      Avtomatik hisob: <b>${fmtMoney(auto)}</b> (${fmtMoney(FINE_PER_MIN)}/daqiqa)
     </div>
     <label>Jarima summasi (so'm)</label>
     <input id="feVal" type="number" min="0" step="1000" value="${a.fineOverride != null ? a.fineOverride : auto}">
@@ -2830,11 +2912,11 @@ async function saveFineEdit(emp, date, forceNull){
   if (CLOUD) {
     const { data, error } = await sb.from("attendance").update({ fine_override: val }).eq("id", a.id).select();
     if (error) return toast("Xatolik: " + error.message);
-    if (!data || !data.length) return toast("Ruxsat yo'q — supabase-update-12.sql ni Run qiling");
+    if (!data || !data.length) return toast(permErr("supabase-update-12.sql"));
   }
   a.fineOverride = val;
   closeModal();
-  toast(val === null ? "Avtomatik hisobga qaytarildi" : (val === 0 ? "Jarima bekor qilindi" : `Jarima: ${fmtShort(val)}`));
+  toast(val === null ? "Avtomatik hisobga qaytarildi" : (val === 0 ? "Jarima bekor qilindi" : `Jarima: ${fmtMoney(val)}`));
   render();
 }
 
@@ -2863,7 +2945,7 @@ function fbRow(f){
     <div class="meta"><b>${esc(e.name)} · ${isBonus?"Bonus":"Jarima"}</b>
       <span>${esc(f.reason)}</span></div>
     <div class="amount num" style="color:${isBonus?"var(--success)":"var(--danger)"}">
-      ${isBonus?"+":"−"}${fmtShort(f.amount)}<small>${uzDate(f.date)}</small></div>
+      ${isBonus?"+":"−"}${fmtMoney(f.amount)}<small>${uzDate(f.date)}</small></div>
   </div>`;
 }
 function pgFineBonus(){
@@ -3107,15 +3189,15 @@ async function confirmRemove(id){
 ===================================================== */
 /* Supabase'dan barcha ruxsat etilgan ma'lumotlarni yuklash (RLS avtomatik filtrlaydi) */
 async function loadAll(){
-  const monthStart = TODAY.slice(0,8) + "01";
+  const monthStart = viewMonthStart(), monthEnd = viewMonthEnd();
   const [pr, tk, fb, at, st, dp, fd] = await Promise.all([
     sb.from("profiles").select("*").eq("active", true),
     sb.from("tasks").select("*").order("created_at"),
-    sb.from("fine_bonus").select("*").order("date"),
-    sb.from("attendance").select("*").gte("date", monthStart).order("date"),
+    sb.from("fine_bonus").select("*").gte("date", monthStart).lte("date", monthEnd).order("date"),
+    sb.from("attendance").select("*").gte("date", monthStart).lte("date", monthEnd).order("date"),
     sb.from("settings").select("*").eq("id", 1).maybeSingle(),
     sb.from("departments").select("*").order("name"),
-    sb.from("field_days").select("*").gte("date", monthStart),
+    sb.from("field_days").select("*").gte("date", monthStart).lte("date", monthEnd),
   ]);
   if (dp.data && dp.data.length) DEPTS = dp.data.map(d => ({ id: d.id, name: d.name, color: d.color }));
   OFFICE = (st.data && st.data.office_lat != null)
