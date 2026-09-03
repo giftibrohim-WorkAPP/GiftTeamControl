@@ -204,7 +204,7 @@ tr.rowhover:hover td{background:var(--surface2)}
 .filters{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:15px;align-items:center}
 .bell-badge{position:absolute;top:-5px;right:-5px;background:var(--danger);color:#fff;font-size:10px;font-weight:800;
   min-width:17px;height:17px;border-radius:99px;display:none;align-items:center;justify-content:center;padding:0 4px}
-.notif-panel{position:absolute;right:0;top:46px;width:305px;max-height:340px;overflow-y:auto;display:none;z-index:45;padding:5px}
+.notif-panel{position:absolute;right:0;top:46px;width:340px;max-width:calc(100vw - 24px)!important;max-height:min(420px,70vh);overflow-y:auto;display:none;z-index:45;padding:5px}
 .notif-panel.open{display:block}
 .notif-item{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;padding:10px 11px;
   border-radius:10px;font-size:12.5px;font-weight:600;line-height:1.4}
@@ -728,9 +728,13 @@ function beep(){
 }
 async function notifyEnable(){
   if (!("Notification" in window)) return toast("Bu brauzer bildirishnomani qo'llamaydi");
+  if (Notification.permission === "granted") { beep(); notifyUser("GM Pulse", "Bildirishnomalar allaqachon yoqilgan ✓"); return toast("Allaqachon yoqilgan ✓ (sinov bildirishnomasi yuborildi)"); }
+  if (Notification.permission === "denied") return toast("Brauzer bildirishnomani TAQIQLAGAN — manzil qatoridagi qulf belgisi → Bildirishnomalar → Ruxsat berish");
+  toast("Brauzer ruxsat so'rayapti — 'Ruxsat berish' ni bosing");
   const p = await Notification.requestPermission();
   if (p === "granted") { toast("Bildirishnomalar yoqildi 🔔"); beep(); notifyUser("GM Pulse", "Bildirishnomalar yoqildi ✓"); }
-  else toast("Ruxsat berilmadi — brauzer sozlamalaridan yoqing");
+  else toast("Ruxsat berilmadi — keyinroq manzil qatoridagi qulf belgisidan yoqishingiz mumkin");
+  renderBell();
 }
 function notifyUser(title, body){
   beep();
@@ -2163,8 +2167,9 @@ function pgDesign(){
   const designers = EMPLOYEES.filter(e => isDesigner(e) && String(e.id)!==String(USER.id));
   const mgmt = canSeeAll && designers.length ? `<h3 class="section-title" style="margin-top:18px">Dizaynerlar (${monthLabelLow()})</h3>
     <div class="card">${designers.map(e => { const pend = DESIGN_ENTRIES.filter(x=>String(x.emp)===String(e.id)&&x.status==="pending").length;
+      const pendToday = DESIGN_ENTRIES.filter(x=>String(x.emp)===String(e.id)&&x.status==="pending"&&x.date===TODAY).length;
       return `<div class="fb-item" style="cursor:pointer" onclick="openDesignEmp('${e.id}')">${avatarHtml(e,"sm")}
-        <div class="meta"><b>${esc(e.name)} ${pend?`<span class="tag gold">${pend} ta tasdiq kutmoqda</span>`:""}</b>
+        <div class="meta"><b>${esc(e.name)} ${pend?`<span class="tag gold">${pend} ta kutmoqda${pendToday&&pendToday!==pend?` (bugun ${pendToday})`:""}</span>`:""}</b>
           <span>${DESIGN_BRANDS.map(b=>`${esc(b.name)}: ${(designByBrand(e.id)[b.id]||{n:0}).n}`).join(" · ")}</span></div>
         <div class="amount num" style="color:var(--success)">${fmtMoney(designTotal(e.id))}</div></div>`; }).join("")}</div>` : "";
   const emptyHint = !me && canSeeAll && !designers.length
@@ -2202,13 +2207,33 @@ async function addDesign(){
   DESIGN_ENTRIES.push(rec); $("#dsNote").value = "";
   toast(`${b.name}: ${fmtMoney(b.price)} — kassir tasdig'iga yuborildi`); render();
 }
-async function decideDesign(id, status){
+let __designBusy = false;
+async function decideDesign(id, status, silent){
   const x = DESIGN_ENTRIES.find(d=>String(d.id)===String(id)); if (!x) return;
+  if (x.status !== "pending") return;                       // ikki marta bosish himoyasi
   if (!isKassir()) return toast("Tasdiqlash huquqi yo'q");
-  if (CLOUD) { const { data, error } = await sb.from("design_entries").update({ status, decided_by:USER.id, decided_at:new Date().toISOString() }).eq("id", x.id).select(); if (error) return toast("Xatolik: "+error.message); if (!data||!data.length) return toast(permErr("supabase-update-20.sql")); }
-  x.status = status; toast(status==="approved"?"Tasdiqlandi ✓":"Rad etildi"); render();
+  if (__designBusy) return; __designBusy = true;
+  toast("Saqlanmoqda...");
+  try {
+    if (CLOUD) { const { data, error } = await sb.from("design_entries").update({ status, decided_by:USER.id, decided_at:new Date().toISOString() }).eq("id", x.id).select();
+      if (error) return toast("Xatolik: "+error.message); if (!data||!data.length) return toast(permErr("supabase-update-20.sql")); }
+    x.status = status;
+    if (!silent) toast(status==="approved"?"Tasdiqlandi ✓":"Rad etildi");
+  } finally { __designBusy = false; }
+  refreshDesignView(x.emp);
 }
-async function decideDesignDay(empId, date, status){ for (const x of DESIGN_ENTRIES.filter(d=>String(d.emp)===String(empId)&&d.date===date&&d.status==="pending")) await decideDesign(x.id, status); }
+async function decideDesignDay(empId, date, status){
+  const list = DESIGN_ENTRIES.filter(d=>String(d.emp)===String(empId)&&d.date===date&&d.status==="pending");
+  for (const x of list) await decideDesign(x.id, status, true);
+  toast(`${list.length} ta yozuv ${status==="approved"?"tasdiqlandi ✓":"rad etildi"}`);
+  refreshDesignView(empId);
+}
+/* Ochiq oyna (modal) va sahifani DARHOL yangilash — oynani yopib-ochish shart emas */
+function refreshDesignView(empId){
+  render();
+  const mb = document.getElementById("modalBox");
+  if (mb && document.getElementById("modalBg")?.classList.contains("open") && mb.innerHTML.includes("dizaynlar")) openDesignEmp(empId);
+}
 async function delDesign(id){
   if (CLOUD) { const { error } = await sb.from("design_entries").delete().eq("id", id); if (error) return toast("Xatolik: "+error.message); }
   DESIGN_ENTRIES = DESIGN_ENTRIES.filter(d=>String(d.id)!==String(id)); closeModal(); render();
@@ -2588,7 +2613,11 @@ async function sendSnabMsg(oid){
   const inp = $("#snMsg"); const t = inp.value.trim(); if (!t) return; inp.value = "";
   await snabMsg(oid, t, "text", "all"); render();
 }
-function openSnabRoles(){ openAccessModal("snab_role", "snabRole", "🔑 Snabjeniya rollari", { none:"— yo'q —", snab:"📋 Ta'minotchi (snab)", kassir:"💳 Kassir", zavsklad:"📦 Zavsklad" }, "Ta'minotchi zakaz ochadi va to'lov so'raydi; kassir to'laydi (tovarni ko'rmaydi); zavsklad tovarni qabul qiladi (to'lovni ko'rmaydi)."); }
+function openSnabRoles(){
+  const cnt = r => EMPLOYEES.filter(e=>e.snabRole===r).length;
+  const warn = ["snab","kassir","zavsklad"].filter(r=>cnt(r)>1).map(r=>`${ {snab:"Ta'minotchi",kassir:"Kassir",zavsklad:"Zavsklad"}[r] }: ${cnt(r)} kishi`).join(", ");
+  openAccessModal("snab_role", "snabRole", "🔑 Snabjeniya rollari", { none:"— yo'q —", snab:"📋 Ta'minotchi (snab)", kassir:"💳 Kassir", zavsklad:"📦 Zavsklad" },
+    "Ta'minotchi zakaz ochadi va to'lov so'raydi; kassir to'laydi (tovarni ko'rmaydi); zavsklad tovarni qabul qiladi (to'lovni ko'rmaydi). <b>Kassir — faqat bitta odam</b> (dizayn va sotuv KPI tasdig'i ham unda). Ta'minotchi/zavsklad bir nechta bo'lishi mumkin." + (cnt("kassir")>1 ? ` <b style="color:var(--danger)">⚠️ Hozir ${cnt("kassir")} ta kassir bor — bittasini tanlang, qolganidan olinadi.</b>` : "")); }
 
 /* ================= POSTAVSHIK sahifasi (?sup=TOKEN, login yo'q) ================= */
 async function supplierPage(token){
@@ -2777,12 +2806,25 @@ function openAccessModal(col, field, title, lbl, extraNote){
 }
 async function setAccess(col, field, id, v){
   const e = empById(id); if (!e) return;
+  // KASSIR faqat bitta odam: yangisiga berilsa, oldingi kassirdan avtomatik olinadi
+  if (col === "snab_role" && v === "kassir") {
+    const prev = EMPLOYEES.find(x => x.snabRole === "kassir" && String(x.id) !== String(id));
+    if (prev) {
+      if (!confirm(`Hozir kassir — ${prev.name}. Kassir faqat BITTA odam bo'ladi.\n\n${prev.name}dan olib, ${e.name}ga berilsinmi?`)) { openSnabRoles(); return; }
+      if (CLOUD) { const { error } = await sb.from("profiles").update({ snab_role: "none" }).eq("id", prev.id); if (error) return toast("Xatolik: " + error.message); }
+      prev.snabRole = "none";
+      if (String(USER.id) === String(prev.id)) USER.snabRole = "none";
+    }
+  }
   if (CLOUD) {
     const { data, error } = await sb.from("profiles").update({ [col]: v }).eq("id", id).select();
     if (error) return toast("Xatolik: " + error.message);
     if (!data || !data.length) return toast(permErr("supabase-update-19.sql"));
   }
-  e[field] = v; toast(`${e.name.split(" ")[0]}: ${v}`); renderNav();
+  e[field] = v;
+  if (String(USER.id) === String(id)) USER[field] = v;
+  toast(`${e.name.split(" ")[0]}: ${v === "none" ? "olib tashlandi" : v}`); renderNav();
+  if (col === "snab_role") openSnabRoles(); // oynani yangilash (eski kassir "yo'q" bo'lib ko'rinsin)
 }
 
 /* ---------- DONABAY ISH (Karona) ---------- */
@@ -2819,6 +2861,8 @@ async function decidePiece(id, status){
   x.status = status;
   toast(status === "approved" ? "Tasdiqlandi ✓ — hisobga qo'shildi" : "Rad etildi");
   render();
+  const mb = document.getElementById("modalBox");
+  if (mb && document.getElementById("modalBg")?.classList.contains("open") && mb.innerHTML.includes("donabay ish")) openPieceEmp(x.emp);
 }
 async function decidePieceDay(empId, date, status){
   const list = PIECE_ENTRIES.filter(p => String(p.emp)===String(empId) && p.date===date && p.status==="pending");
