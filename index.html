@@ -1340,6 +1340,7 @@ render = function(){ _origRender();
   if (PAGE === "profile" && CLOUD) loadDocs(PROFILE_ID);
   if (PAGE === "me" && CLOUD) loadDocs(USER.id);
   if (PAGE === "rating" && CLOUD) loadRating();
+  if (PAGE === "assistant") aiCheck().then(on => { const b = document.getElementById("aiBadge"); if (b) { b.textContent = on ? "🟢 Gemini AI ulangan" : (CLOUD ? "⚪ AI yo'q — mahalliy hisoblovchi" : "demo"); b.className = "tag " + (on ? "success" : "muted"); } });
 };
 
 /* --- Hujjatlar (Supabase Storage) --- */
@@ -1677,12 +1678,65 @@ async function astAnswer(qRaw){
   }
   return out.join("\n\n");
 }
+/* ===== AI ASSISTENT (Gemini — server orqali, kalit brauzerga bormaydi) ===== */
+let AI_ON = null; // null = tekshirilmagan
+async function aiCheck(){
+  if (AI_ON !== null) return AI_ON;
+  try { const r = await fetch("/api/health"); const j = await r.json(); AI_ON = !!j.ai; } catch(e) { AI_ON = false; }
+  return AI_ON;
+}
+/* Dastur ma'lumotlarini AI uchun ixcham JSON qilib yig'ish (faqat rahbariyat chaqiradi) */
+async function aiContext(){
+  const name = id => empById(id)?.name || "?";
+  const months = monthOptions().slice(0, 3); // joriy + 2 oldingi oy
+  const att = [], fb = [], ords = [], piece = [];
+  for (const ym of months) { const d = await astLoadMonth(ym); att.push(...d.att); fb.push(...d.fb); ords.push(...d.orders); piece.push(...d.piece); }
+  const lateOf = a => (a.lateExcused || isSunday(a.date)) ? 0 : Math.max(0, minutes(a.in) - minutes(WORK_START));
+  const emps = EMPLOYEES.filter(e => e.role !== "admin").map(e => {
+    const d = effDetail(e.id); const earn = earnedToDate(e);
+    const myAtt = att.filter(a => String(a.emp)===String(e.id));
+    return { id: e.id, ism: e.name, lavozim: e.pos, bolim: e.dept ? deptById(e.dept)?.name : "rahbariyat", kompaniya: empCompany(e) || null,
+      rol: e.role, oylik: e.salary, shartnoma_tugash: e.contract || null,
+      kpi_joriy_oy: d.noData ? null : d.kpi, vazifa_jami: d.tTotal, vazifa_bajarilgan: d.tDone, muddatida: d.onTime,
+      davomat_kun: d.days, vaqtida_kelgan_kun: d.punct, yakshanba_ishlagan: d.sundays,
+      kechikish_soni_3oy: myAtt.filter(a => lateOf(a) > 0).length, kechikish_daqiqa_3oy: myAtt.reduce((s,a)=>s+lateOf(a),0),
+      ishlagan_soat_joriy_oy: +earn.hours.toFixed(1), maosh_joriy_oy: Math.round(earn.total), jarima_joriy_oy: Math.round(earn.fine), bonus_joriy_oy: Math.round(earn.bonus),
+      donabay_dizayn_sotuvkpi: Math.round(earn.piece), donabay: !!e.piecework, dizayner: isDesigner(e), sotuv_menejeri: !!e.salesManager };
+  });
+  const tasks = TASKS.filter(t => t.status !== "closed").map(t => ({ nomi: t.title, masullar: taskEmps(t).map(name), beruvchi: name(t.by), muddat: t.due, holat: t.status, muddati_otgan: taskOverdue(t), takror: t.rep !== "none" ? repLabel(t.rep) : null }));
+  const byMonth = months.map(ym => { const a = att.filter(x=>x.date.slice(0,7)===ym), o = ords.filter(x=>x.date.slice(0,7)===ym);
+    return { oy: monthLabel(ym), davomat_belgilash: a.length, kechikish: a.filter(x=>lateOf(x)>0).length, zakaz_soni: o.length, savdo_summa: o.reduce((s,x)=>s+x.total,0),
+      donabay_summa: piece.filter(x=>x.date.slice(0,7)===ym).reduce((s,x)=>s+x.qty*x.price,0) }; });
+  const sales = salesManagers().map(e => { const k = salesKpi(e.id); return { menejer: e.name, jami_sotuv: k.total, kpi_som: k.kpi, bosqich_foiz: k.cur.pct, sovga: k.gift, sovgagacha_qoldi: k.toGift }; });
+  const snab = CONTRACTORS.map(c => { const b = ctBalance(c.id); return { kontragent: c.name, tovar_olindi: b.goods, tolandi: b.paid, balans: b.balance, izoh: b.balance>0?"biz plyusdamiz":b.balance<0?"biz qarzdormiz":"teng",
+    ochiq_zakazlar: SNAB_ORDERS.filter(o=>String(o.contractor)===String(c.id) && !["done","closed"].includes(snabStatus(o))).map(o=>o.num+" "+SNAB_ST[snabStatus(o)][1]) }; });
+  const stock = stockBalance().filter(b => b.inQ > 0).map(b => ({ tovar: b.name + (b.color?" ("+b.color+")":""), qoldiq: b.left, kam_qolgan: b.left <= 5, narx: b.lastPrice }));
+  const custs = {}; ords.forEach(o => { const k = o.customer.trim(); custs[k] = (custs[k]||0) + o.total; });
+  return JSON.stringify({
+    bugun: TODAY, korilayotgan_oy: monthLabel(), ish_vaqti: "9:00-18:00, obed 13:00-14:00, yakshanba dam",
+    kompaniyalar: companies(), bolimlar: DEPTS.map(d => ({ nomi: d.name, kompaniya: d.company || null, xodim_soni: EMPLOYEES.filter(e=>String(e.dept)===String(d.id)).length })),
+    xodimlar: emps, vazifalar_ochiq: tasks.filter(t=>t.holat!=="done"), vazifalar_bajarilgan_soni: tasks.filter(t=>t.holat==="done").length,
+    oylar_kesimida: byMonth, eng_katta_mijozlar: Object.entries(custs).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([m,s])=>({ mijoz:m, summa:s })),
+    sotuv_kpi: sales, snabjeniya_kontragentlar: snab, sklad_qoldiq: stock,
+    ruxsat_sorovlari_kutayotgan: LEAVE_REQS.filter(r=>r.status==="pending").map(r=>({ xodim: name(r.emp), sana: r.date, tur: leaveKindLabel(r.kind), sabab: r.reason })),
+  });
+}
+async function aiAsk(q){
+  const { data: ses } = await sb.auth.getSession();
+  const token = ses?.session?.access_token; if (!token) throw new Error("Sessiya topilmadi — qayta kiring");
+  const context = await aiContext();
+  const history = AST_HISTORY.slice(0, 6).reverse().map(h => ({ q: h.q, a: h.a }));
+  const r = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, question: q, context, history }) });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error);
+  return j.answer;
+}
 function pgAssistant(){
   if (!(isExec(USER.role) || USER.role === "admin")) return `<div class="card empty">Assistent faqat rahbariyat uchun</div>`;
   return `
     <div class="card" style="padding:16px;margin-bottom:14px">
-      <b style="font-size:14px">🤖 Assistent</b>
-      <div style="font-size:12.5px;color:var(--muted);margin:5px 0 10px">Dasturdagi ma'lumotlardan aniq hisoblab javob beradi. Davr (bu hafta / bu oy / o'tgan oy / avgust / oylar kesimida), xodim, bo'lim yoki kompaniya nomini qo'shib so'rang.</div>
+      <b style="font-size:14px">🤖 Assistent</b> <span id="aiBadge" class="tag muted">tekshirilmoqda...</span>
+      <div style="font-size:12.5px;color:var(--muted);margin:5px 0 10px">Istalgan savolni bering — dastur ma'lumotlari asosida javob beradi, tahlil qiladi, maslahat beradi. Masalan: "bu oy kim eng yaxshi ishladi va nega", "sotuvni oshirish uchun nima qilay", "qaysi postavshikka qarzimiz ko'p".</div>
       <div style="display:flex;gap:8px">
         <input id="astInput" placeholder="Savolingizni yozing..." onkeydown="if(event.key==='Enter')astAsk()">
         <button class="btn primary" onclick="astAsk()">So'rash</button>
@@ -1703,7 +1757,12 @@ async function astAsk(text){
   const log = document.getElementById("astLog");
   if (log) log.insertAdjacentHTML("afterbegin", astBubble({ q, a: "⏳ Hisoblanmoqda..." }));
   let a;
-  try { a = await astAnswer(q); } catch(e) { a = "Xatolik: " + e.message; }
+  try {
+    if (CLOUD && await aiCheck()) {
+      try { a = await aiAsk(q); }
+      catch(e) { const loc = await astAnswer(q); a = `⚠️ AI javob bermadi (${e.message}). Mahalliy hisob:\n\n${loc}`; }
+    } else a = await astAnswer(q);
+  } catch(e) { a = "Xatolik: " + e.message; }
   AST_HISTORY.unshift({ q, a });
   if (AST_HISTORY.length > 30) AST_HISTORY.pop();
   if (log) log.innerHTML = AST_HISTORY.map(astBubble).join("");
