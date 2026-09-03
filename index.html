@@ -226,6 +226,15 @@ tr.rowhover:hover td{background:var(--surface2)}
 .archive-bar{background:var(--gold-soft, rgba(212,160,23,.12));border:1px solid var(--gold);color:var(--gold);
   border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:13px;font-weight:700;display:flex;gap:9px;align-items:center;flex-wrap:wrap}
 .archive-bar .btn{margin-left:auto}
+.ledger{overflow-x:auto}
+.ledger-head,.ledger-row,.ledger-foot{display:grid;grid-template-columns:82px 70px 1fr 110px 110px 120px;gap:8px;padding:9px 14px;align-items:center;font-size:12.5px;min-width:600px}
+.ledger-head{font-size:10.5px;font-weight:800;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--line)}
+.ledger-row{border-bottom:1px dashed var(--line)}
+.ledger-foot{background:var(--surface2);font-weight:800;border-top:2px solid var(--line)}
+.ledger .r{text-align:right}
+.ledger .muted{color:var(--muted)}
+.snab-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.snab-top .btn{flex:1 1 auto;justify-content:center}
 .avatar.has-img{padding:0;overflow:hidden}
 .avatar.has-img img{width:100%;height:100%;object-fit:cover;display:block}
 .photo-edit{position:relative;display:inline-block}
@@ -1911,8 +1920,8 @@ async function loadSnab(){
   if (ct.data) CONTRACTORS = ct.data.map(c => ({ id:c.id, name:c.name, phone:c.phone, note:c.note, token:c.token, active:c.active }));
   if (so.data) SNAB_ORDERS = so.data.map(o => ({ id:o.id, num:o.num, contractor:o.contractor, title:o.title, status:o.status, by:o.created_by, at:o.created_at }));
   if (sm.data) SNAB_MSGS = sm.data.map(m => ({ id:m.id, ord:m.ord, author:m.author, authorName:m.author_name, text:m.text, kind:m.kind, scope:m.scope, at:m.created_at }));
-  if (si.data) SNAB_ITEMS = si.data.map(i => ({ id:i.id, ord:i.ord, name:i.name, qty:+i.qty, price:+i.price, received:i.received }));
-  if (sp.data) SNAB_PAYS = sp.data.map(p => ({ id:p.id, ord:p.ord, amount:+p.amount, purpose:p.purpose, status:p.status, reqBy:p.requested_by, paidBy:p.paid_by, paidAt:p.paid_at, at:p.created_at }));
+  if (si.data) SNAB_ITEMS = si.data.map(i => ({ id:i.id, ord:i.ord, name:i.name, qty:+i.qty, price:+i.price, received:i.received, receivedAt:i.received_at }));
+  if (sp.data) SNAB_PAYS = sp.data.map(p => ({ id:p.id, ord:p.ord, amount:+p.amount, purpose:p.purpose, status:p.status, reqBy:p.requested_by, paidBy:p.paid_by, paidAt:p.paid_at, confirmedAt:p.confirmed_at, at:p.created_at }));
 }
 /* Kontragent balansi: to'langan (tasdiqlangan) − qabul qilingan tovar.
    + → biz PLYUSDAMIZ (postavshik bizga qarz), − → biz QARZDORMIZ */
@@ -1927,19 +1936,55 @@ function balTag(b, big){
   const txt = b > 0 ? `+${fmtMoney(b)} plyus` : b < 0 ? `−${fmtMoney(-b)} qarz` : "0 · teng";
   return `<span class="tag ${cls}" style="${big?"font-size:13px;padding:6px 11px":""}">${txt}</span>`;
 }
+/* Kontragent bilan barcha oldi-berdi — sana bo'yicha, yig'ilib boruvchi qoldiq bilan */
+function ctLedger(cid){
+  const ords = SNAB_ORDERS.filter(o => String(o.contractor)===String(cid));
+  const numOf = id => ords.find(o=>String(o.id)===String(id))?.num || "";
+  const ev = [];
+  SNAB_ITEMS.filter(i => i.received && ords.some(o=>String(o.id)===String(i.ord))).forEach(i =>
+    ev.push({ date:(i.receivedAt||i.at||"").slice(0,10) || TODAY, ord:numOf(i.ord), desc:`${i.name} — ${i.qty} × ${fmtMoney(i.price)}`, goods:i.qty*i.price, pay:0 }));
+  SNAB_PAYS.filter(p => p.status==="confirmed" && ords.some(o=>String(o.id)===String(p.ord))).forEach(p =>
+    ev.push({ date:(p.confirmedAt||p.paidAt||p.at||"").slice(0,10) || TODAY, ord:numOf(p.ord), desc:`To'lov: ${p.purpose||""}`, goods:0, pay:p.amount }));
+  ev.sort((a,b)=>a.date.localeCompare(b.date));
+  let bal = 0;
+  return ev.map(e => { bal += e.pay - e.goods; return { ...e, bal }; });
+}
+function ledgerHtml(cid, compact){
+  const rows = ctLedger(cid);
+  const b = ctBalance(cid);
+  if (!rows.length) return `<div class="card empty">Hali oldi-berdi yo'q</div>`;
+  return `<div class="card ledger">
+    <div class="ledger-head"><span>Sana</span><span>Zakaz</span><span>Tavsif</span><span class="r">Tovar</span><span class="r">To'lov</span><span class="r">Qoldiq</span></div>
+    ${rows.map(r=>`<div class="ledger-row">
+      <span class="num">${uzDate(r.date)}</span><span class="num muted">${esc(r.ord)}</span><span>${esc(r.desc)}</span>
+      <span class="r num" style="color:var(--danger)">${r.goods?"−"+fmtMoney(r.goods):""}</span>
+      <span class="r num" style="color:var(--success)">${r.pay?"+"+fmtMoney(r.pay):""}</span>
+      <span class="r num" style="font-weight:800;color:${r.bal>0?"var(--success)":r.bal<0?"var(--danger)":""}">${r.bal>0?"+":r.bal<0?"−":""}${fmtMoney(Math.abs(r.bal))}</span></div>`).join("")}
+    <div class="ledger-foot"><span>JAMI</span><span></span><span></span>
+      <span class="r num" style="color:var(--danger)">−${fmtMoney(b.goods)}</span>
+      <span class="r num" style="color:var(--success)">+${fmtMoney(b.paid)}</span>
+      <span class="r num" style="font-weight:900;color:${b.balance>0?"var(--success)":b.balance<0?"var(--danger)":""}">${b.balance>0?"+":b.balance<0?"−":""}${fmtMoney(Math.abs(b.balance))}</span></div>
+    <div style="padding:8px 14px;font-size:11.5px;color:var(--muted)">− tovar qabul qilindi (bizning qarz oshadi) · + to'lov tasdiqlandi (qarz kamayadi) · Qoldiq: + biz plyusdamiz, − biz qarzdormiz</div>
+  </div>`;
+}
+function exportLedger(cid){
+  const c = CONTRACTORS.find(x=>String(x.id)===String(cid));
+  const rows = [["Sana","Zakaz","Tavsif","Tovar (−)","To'lov (+)","Qoldiq"]];
+  ctLedger(cid).forEach(r => rows.push([r.date, r.ord, r.desc, r.goods||"", r.pay||"", r.bal]));
+  downloadCSV("oldi-berdi_" + (c?c.name.replace(/\s+/g,"-"):cid), rows);
+}
 const SNAB_ST = { new:["gold","Yangi"], goods_ok:["info","Tovar qabul qilindi"], pay_requested:["gold","To'lov so'raldi"], paid:["info","To'landi — tasdiq kutilmoqda"], confirmed:["success","Yakunlandi ✓"], closed:["muted","Yopilgan"] };
-function snabGo(page, id){ SNAB_VIEW = { page, contractor: page==="contractor"?id:SNAB_VIEW.contractor, order: page==="order"?id:null }; render(); }
+function snabGo(page, id){ SNAB_VIEW = { page, contractor: page==="contractor"?id:SNAB_VIEW.contractor, order: page==="order"?id:null, tab: page==="contractor" ? (SNAB_VIEW.tab||"orders") : "orders" }; render(); }
 
 function pgSnab(){
   if (!canSeeSnab()) return `<div class="card empty">Snabjeniya bo'limiga ruxsatingiz yo'q</div>`;
   const r = snabRole();
   const roleTag = `<span class="tag info">${ {admin:"rahbariyat",snab:"ta'minotchi",kassir:"kassir",zavsklad:"zavsklad"}[r] }</span>`;
-  const nav = `<div class="filters">
-    <button class="btn ${SNAB_VIEW.page==="list"?"primary":"ghost"} sm" onclick="snabGo('list')">👥 Kontragentlar</button>
-    <button class="btn ${SNAB_VIEW.page==="balance"?"primary":"ghost"} sm" onclick="snabGo('balance')">⚖️ Debit / Kredit</button>
-    <button class="btn ${SNAB_VIEW.page==="orders"?"primary":"ghost"} sm" onclick="snabGo('orders')">📋 Barcha zakazlar</button>
-    ${USER.role==="admin" ? `<button class="btn ghost sm" onclick="openSnabRoles()">🔑 Rollar</button>` : ""}
-    <span style="margin-left:auto">${roleTag}</span></div>`;
+  const inside = SNAB_VIEW.page === "order" || SNAB_VIEW.page === "contractor";
+  const nav = inside ? "" : `<div class="snab-top">
+    <button class="btn ${SNAB_VIEW.page==="list"?"primary":"ghost"}" onclick="snabGo('list')">👥 Kontragentlar</button>
+    <button class="btn ${SNAB_VIEW.page==="balance"?"primary":"ghost"}" onclick="snabGo('balance')">⚖️ Umumiy hisob</button>
+    ${USER.role==="admin" ? `<button class="btn ghost sm" style="flex:0" title="Rollar" onclick="openSnabRoles()">🔑</button>` : ""}</div>`;
   if (SNAB_VIEW.page === "order") return nav + snabOrderView(SNAB_VIEW.order);
   if (SNAB_VIEW.page === "contractor") return nav + snabContractorView(SNAB_VIEW.contractor);
   if (SNAB_VIEW.page === "balance") {
@@ -1950,17 +1995,14 @@ function pgSnab(){
       <div class="card stat"><div class="lbl">${IC.up} Bizning plyus</div><div class="val num" style="color:var(--success);font-size:19px">${fmtMoney(plus)}</div><div class="delta" style="color:var(--muted)">postavshiklar bizga qarz</div></div>
       <div class="card stat"><div class="lbl">${IC.down} Bizning qarz</div><div class="val num" style="color:var(--danger);font-size:19px">${fmtMoney(minus)}</div><div class="delta" style="color:var(--muted)">biz postavshiklarga qarz</div></div>
       <div class="card stat"><div class="lbl">${IC.money} Sof</div><div class="val num" style="font-size:19px;color:${plus-minus>=0?"var(--success)":"var(--danger)"}">${plus-minus>=0?"+":"−"}${fmtMoney(Math.abs(plus-minus))}</div></div></div>
-      ${seesGoods()&&seesPay() ? "" : `<div class="tag muted" style="margin-bottom:10px">Balans to'liq hisob uchun tovar va to'lov ma'lumoti kerak — sizning rolingizda qisman ko'rinadi</div>`}
+
       <div class="card">${rows.sort((a,b)=>a.b.balance-b.b.balance).map(({c,b})=>`
         <div class="fb-item" style="cursor:pointer" onclick="snabGo('contractor','${c.id}')">
           <div class="fb-icon" style="background:var(--accent-soft);color:var(--accent)">🏭</div>
           <div class="meta"><b>${esc(c.name)}</b><span>tovar ${fmtMoney(b.goods)} · to'langan ${fmtMoney(b.paid)}</span></div>
           ${balTag(b.balance)}</div>`).join("") || `<div class="empty">Kontragent yo'q</div>`}</div>`;
   }
-  if (SNAB_VIEW.page === "orders") {
-    const list = SNAB_ORDERS.slice().sort((a,b)=>b.at.localeCompare(a.at));
-    return nav + `<div class="card">${list.map(o=>snabOrderRow(o)).join("") || `<div class="empty">Zakaz yo'q</div>`}</div>`;
-  }
+
   // list
   const canAdd = ["admin","snab"].includes(r);
   return nav + `${canAdd ? `<div class="card" style="padding:14px 16px;margin-bottom:14px;display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end">
@@ -1992,25 +2034,26 @@ function snabContractorView(cid){
   const ords = SNAB_ORDERS.filter(o=>String(o.contractor)===String(cid)).sort((a,b)=>b.at.localeCompare(a.at));
   const canAdd = ["admin","snab"].includes(snabRole());
   const link = location.origin + location.pathname + "?sup=" + c.token;
-  return `<div class="card" style="padding:16px;margin-bottom:14px">
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-        <button class="btn ghost sm" onclick="snabGo('list')">← Orqaga</button>
-        <div style="flex:1;min-width:150px"><b style="font-family:'Sora';font-size:17px">🏭 ${esc(c.name)}</b><br><span style="color:var(--muted);font-size:12.5px">${c.phone?esc(c.phone)+" · ":""}${ords.length} zakaz</span></div>
-        ${balTag(b.balance, true)}</div>
-      <div class="emp-mini" style="margin-top:12px">
-        <div><b class="num">${fmtMoney(b.goods)}</b><span>QABUL QILINGAN TOVAR</span></div>
-        <div><b class="num">${fmtMoney(b.paid)}</b><span>TASDIQLANGAN TO'LOV</span></div>
-        <div><b class="num" style="color:${b.balance>=0?"var(--success)":"var(--danger)"}">${b.balance>=0?"+":"−"}${fmtMoney(Math.abs(b.balance))}</b><span>${b.balance>=0?"BIZ PLYUSDAMIZ":"BIZ QARZDORMIZ"}</span></div></div>
-      ${["admin","snab"].includes(snabRole()) ? `<div style="margin-top:12px;padding:10px 12px;background:var(--surface2);border-radius:10px;font-size:12px">
-        🔗 <b>Postavshik havolasi</b> (login shart emas — faqat shu kontragent ma'lumotini ko'radi):<br>
-        <input value="${esc(link)}" readonly onclick="this.select()" style="margin-top:6px;font-size:11.5px">
-        <button class="btn ghost sm" style="margin-top:6px" onclick="navigator.clipboard.writeText('${esc(link)}').then(()=>toast('Havola nusxalandi ✓'))">📋 Nusxalash</button></div>` : ""}
+  const tab = SNAB_VIEW.tab || "orders";
+  return `<div class="card" style="padding:14px 16px;margin-bottom:12px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn ghost sm" onclick="snabGo('list')">←</button>
+        <div style="flex:1;min-width:140px"><b style="font-family:'Sora';font-size:17px">${esc(c.name)}</b><br><span style="color:var(--muted);font-size:12px">${c.phone?esc(c.phone)+" · ":""}${ords.length} zakaz</span></div>
+        <div style="text-align:right"><div class="num" style="font-size:20px;font-weight:900;color:${b.balance>0?"var(--success)":b.balance<0?"var(--danger)":""}">${b.balance>0?"+":b.balance<0?"−":""}${fmtMoney(Math.abs(b.balance))}</div>
+          <div style="font-size:10.5px;color:var(--muted);font-weight:700">${b.balance>0?"BIZ PLYUSDAMIZ":b.balance<0?"BIZ QARZDORMIZ":"HISOB TENG"}</div></div>
+      </div>
+      <div class="snab-top" style="margin:12px 0 0">
+        <button class="btn ${tab==="orders"?"primary":"ghost"} sm" onclick="SNAB_VIEW.tab='orders';render()">📋 Zakazlar</button>
+        <button class="btn ${tab==="ledger"?"primary":"ghost"} sm" onclick="SNAB_VIEW.tab='ledger';render()">🧾 Oldi-berdi</button>
+        ${["admin","snab"].includes(snabRole()) ? `<button class="btn ghost sm" style="flex:0" title="Postavshik havolasi" onclick="navigator.clipboard.writeText('${esc(link)}').then(()=>toast('Postavshik havolasi nusxalandi ✓ — unga yuboring'))">🔗</button>` : ""}
+      </div>
     </div>
-    ${canAdd ? `<div class="card" style="padding:14px 16px;margin-bottom:14px;display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end">
-      <div style="flex:1;min-width:180px"><label>Yangi zakaz (nomi / qisqacha)</label><input id="soTitle" placeholder="masalan: 100 dona futbolka"></div>
-      <button class="btn primary" onclick="addSnabOrder('${cid}')">➕ Zakaz ochish</button></div>` : ""}
-    <h3 class="section-title">Zakazlar va oldi-berdi</h3>
-    <div class="card">${ords.map(snabOrderRow).join("") || `<div class="empty">Zakaz yo'q</div>`}</div>`;
+    ${tab === "ledger"
+      ? `<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button class="btn ghost sm" onclick="exportLedger('${cid}')">⬇ Excel</button></div>` + ledgerHtml(cid)
+      : `${canAdd && !isArchive() ? `<div style="display:flex;gap:8px;margin-bottom:10px">
+          <input id="soTitle" placeholder="Yangi zakaz nomi (masalan: 100 futbolka)" style="flex:1">
+          <button class="btn primary" onclick="addSnabOrder('${cid}')">➕ Ochish</button></div>` : ""}
+        <div class="card">${ords.map(snabOrderRow).join("") || `<div class="empty">Zakaz yo'q</div>`}</div>`}`;
 }
 function snabOrderView(oid){
   const o = SNAB_ORDERS.find(x=>String(x.id)===String(oid)); if (!o) return `<div class="card empty">Topilmadi</div>`;
@@ -2030,11 +2073,12 @@ function snabOrderView(oid){
         <span style="flex:1;min-width:120px">${esc(i.name)} — ${i.qty} × ${fmtMoney(i.price)} = <b>${fmtMoney(i.qty*i.price)}</b></span>
         ${i.received ? '<span class="tag success">qabul qilindi ✓</span>' : (canZav && !isArchive() ? `<button class="btn success sm" onclick="recvSnabItem('${i.id}')">✓ Qabul qildim</button>` : '<span class="tag gold">zavsklad kutmoqda</span>')}
         ${canSnab && !i.received ? `<button class="btn sm" style="color:var(--danger)" onclick="delSnabItem('${i.id}')">✕</button>` : ""}</div>`).join("") || `<div style="color:var(--muted);font-size:12px;margin-top:6px">Tovar kiritilmagan</div>`}
-      ${canSnab && !isArchive() ? `<div style="display:flex;gap:7px;margin-top:10px;flex-wrap:wrap;align-items:flex-end">
+      ${canSnab && !isArchive() ? `<details style="margin-top:10px"><summary class="btn ghost sm" style="display:inline-flex;cursor:pointer;list-style:none">➕ Tovar qo'shish</summary>
+        <div style="display:flex;gap:7px;margin-top:8px;flex-wrap:wrap;align-items:flex-end">
         <div style="flex:2;min-width:130px"><label>Tovar</label><input id="siName" placeholder="Futbolka oq"></div>
         <div style="flex:1;min-width:70px"><label>Soni</label><input id="siQty" type="number" value="1" min="0.01"></div>
         <div style="flex:1;min-width:100px"><label>Narxi</label><input id="siPrice" type="number" min="0" placeholder="0"></div>
-        <button class="btn ghost sm" onclick="addSnabItem('${o.id}')">➕ Qo'shish</button></div>` : ""}
+        <button class="btn primary sm" onclick="addSnabItem('${o.id}')">Saqlash</button></div></details>` : ""}
     </div>` : `<div class="card" style="padding:12px 16px;margin-bottom:12px;color:var(--muted);font-size:12.5px">📦 Tovar tafsilotlari sizning rolingizga ko'rsatilmaydi</div>`;
   // TO'LOVLAR bloki (zavskladga ko'rinmaydi)
   const payBlock = seesPay() ? `<div class="card" style="padding:14px 16px;margin-bottom:12px">
@@ -2045,10 +2089,11 @@ function snabOrderView(oid){
         <span class="tag ${st[0]}">${st[1]}</span>
         ${p.status==="requested" && canKas && !isArchive() ? `<button class="btn success sm" onclick="paySnab('${p.id}')">💳 To'ladim</button><button class="btn ghost sm" onclick="rejectSnabPay('${p.id}')">✗</button>` : ""}
         ${p.status==="paid" && r==="admin" ? `<button class="btn ghost sm" title="Postavshik o'rniga tasdiqlash" onclick="confirmSnabPayAdmin('${p.id}')">✓ tasdiq</button>` : ""}</div>`; }).join("") || `<div style="color:var(--muted);font-size:12px;margin-top:6px">To'lov yo'q</div>`}
-      ${canSnab && !isArchive() ? `<div style="display:flex;gap:7px;margin-top:10px;flex-wrap:wrap;align-items:flex-end">
+      ${canSnab && !isArchive() ? `<details style="margin-top:10px"><summary class="btn ghost sm" style="display:inline-flex;cursor:pointer;list-style:none">💳 To'lov so'rash</summary>
+        <div style="display:flex;gap:7px;margin-top:8px;flex-wrap:wrap;align-items:flex-end">
         <div style="flex:1;min-width:110px"><label>Summa</label><input id="spAmt" type="number" min="0" placeholder="0"></div>
         <div style="flex:2;min-width:150px"><label>Nima uchun</label><input id="spPurp" placeholder="masalan: 100 futbolka uchun avans"></div>
-        <button class="btn ghost sm" onclick="reqSnabPay('${o.id}')">💳 Kassirga yuborish</button></div>` : ""}
+        <button class="btn primary sm" onclick="reqSnabPay('${o.id}')">Kassirga yuborish</button></div></details>` : ""}
     </div>` : `<div class="card" style="padding:12px 16px;margin-bottom:12px;color:var(--muted);font-size:12.5px">💳 To'lov tafsilotlari sizning rolingizga ko'rsatilmaydi</div>`;
   // CHAT
   const chat = `<div class="card" style="padding:14px 16px">
@@ -2062,14 +2107,20 @@ function snabOrderView(oid){
             <div style="font-size:13px;white-space:pre-wrap;margin-top:2px">${esc(m.text)}</div></div></div>`; }).join("") || `<div style="color:var(--muted);font-size:12px">Xabar yo'q</div>`}</div>
       ${!isArchive() ? `<div style="display:flex;gap:7px;margin-top:10px"><input id="snMsg" placeholder="Xabar yozing..." onkeydown="if(event.key==='Enter')sendSnabMsg('${o.id}')"><button class="btn primary sm" onclick="sendSnabMsg('${o.id}')">Yuborish</button></div>` : ""}
     </div>`;
-  return `<div class="card" style="padding:14px 16px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-      <button class="btn ghost sm" onclick="snabGo('contractor','${o.contractor}')">← ${c?esc(c.name):"Orqaga"}</button>
+  // Zakaz cheki: tovar va to'lovlar bir ko'rinishda
+  const receipt = `<div class="card" style="padding:12px 16px;margin-bottom:12px;background:var(--surface2)">
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;flex-wrap:wrap;gap:6px">
+        ${seesGoods() ? `<span>📦 Tovar: <b>${fmtMoney(goodsSum)}</b> (qabul: ${fmtMoney(recvSum)})</span>` : ""}
+        ${seesPay() ? `<span>💳 To'lov: <b>${fmtMoney(paySum)}</b> tasdiqlangan</span>` : ""}
+        ${seesGoods()&&seesPay() ? `<span>Zakaz bo'yicha: <b style="color:${paySum-recvSum>=0?"var(--success)":"var(--danger)"}">${paySum-recvSum>=0?"+":"−"}${fmtMoney(Math.abs(paySum-recvSum))}</b></span>` : ""}
+      </div></div>`;
+  return `<div class="card" style="padding:12px 16px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn ghost sm" onclick="snabGo('contractor','${o.contractor}')">←</button>
       <div style="flex:1;min-width:140px"><b style="font-family:'Sora';font-size:16px">${esc(o.num)}</b> ${o.title?"· "+esc(o.title):""}<br>
-        <span style="color:var(--muted);font-size:12px">${uzDate(o.at.slice(0,10))} · ${empById(o.by)?.name.split(" ")[0]||""}</span></div>
+        <span style="color:var(--muted);font-size:12px">${c?esc(c.name)+" · ":""}${uzDate(o.at.slice(0,10))}</span></div>
       <span class="tag ${cls}">${lbl}</span>
-      ${c ? balTag(b.balance) : ""}
-      ${canSnab && o.status!=="closed" && !isArchive() ? `<button class="btn ghost sm" onclick="closeSnabOrder('${o.id}')">Yopish</button>` : ""}
-    </div>${goodsBlock}${payBlock}${chat}`;
+      ${canSnab && o.status!=="closed" && !isArchive() ? `<button class="btn ghost sm" title="Zakazni yopish" onclick="closeSnabOrder('${o.id}')">✔</button>` : ""}
+    </div>${receipt}${goodsBlock}${payBlock}${chat}`;
 }
 /* Amallar */
 async function snabMsg(ord, text, kind="text", scope="all"){
@@ -2118,7 +2169,7 @@ async function delSnabItem(id){
 async function recvSnabItem(id){
   const i = SNAB_ITEMS.find(x=>String(x.id)===String(id)); if (!i) return;
   if (CLOUD) { const { error } = await sb.from("snab_items").update({ received:true, received_by:USER.id, received_at:new Date().toISOString() }).eq("id", id); if (error) return toast("Xatolik: "+error.message); }
-  i.received = true;
+  i.received = true; i.receivedAt = new Date().toISOString();
   await snabMsg(i.ord, `✅ Zavsklad tovarni qabul qildi: ${i.name} — ${i.qty} dona`, "goods_ok", "all");
   const o = SNAB_ORDERS.find(x=>String(x.id)===String(i.ord));
   if (o && SNAB_ITEMS.filter(x=>String(x.ord)===String(o.id)).every(x=>x.received) && o.status==="new") await setSnabStatus(o, "goods_ok");
@@ -2151,7 +2202,7 @@ async function rejectSnabPay(id){
 async function confirmSnabPayAdmin(id){
   const p = SNAB_PAYS.find(x=>String(x.id)===String(id)); if (!p) return;
   if (CLOUD) { const { error } = await sb.from("snab_payments").update({ status:"confirmed", confirmed_at:new Date().toISOString() }).eq("id", id); if (error) return toast("Xatolik: "+error.message); }
-  p.status = "confirmed"; await snabMsg(p.ord, `✓ To'lov tasdiqlandi (admin): ${fmtMoney(p.amount)}`, "pay_confirm", "all");
+  p.status = "confirmed"; p.confirmedAt = new Date().toISOString(); await snabMsg(p.ord, `✓ To'lov tasdiqlandi (admin): ${fmtMoney(p.amount)}`, "pay_confirm", "all");
   const o = SNAB_ORDERS.find(x=>String(x.id)===String(p.ord));
   if (o && !SNAB_PAYS.some(x=>String(x.ord)===String(o.id) && ["requested","paid"].includes(x.status))) await setSnabStatus(o, "confirmed");
   render();
