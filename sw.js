@@ -1,4 +1,4 @@
-const CACHE = "gm-pulse-v40";
+const CACHE = "gm-pulse-v42";
 const ASSETS = [
   "./",
   "./index.html",
@@ -33,4 +33,13 @@ self.addEventListener("fetch", (e) => {
       })
       .catch(() => caches.match(e.request).then((r) => r || caches.match("./index.html")))
   );
+});
+
+// Bildirishnoma bosilganda ilovani ochish
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+    for (const c of list) { if ("focus" in c) return c.focus(); }
+    return clients.openWindow("./");
+  }));
 });
