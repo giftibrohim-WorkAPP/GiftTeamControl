@@ -220,6 +220,12 @@ tr.rowhover:hover td{background:var(--surface2)}
 .pick-chip input{display:none}
 .pick-chip span{padding:7px 12px;border:1px solid var(--line);border-radius:99px;font-size:12.5px;cursor:pointer;background:var(--surface2)}
 .pick-chip input:checked+span{background:var(--accent);color:#fff;border-color:var(--accent)}
+.avatar.has-img{padding:0;overflow:hidden}
+.avatar.has-img img{width:100%;height:100%;object-fit:cover;display:block}
+.photo-edit{position:relative;display:inline-block}
+.photo-edit .cam{position:absolute;right:-2px;bottom:-2px;width:26px;height:26px;border-radius:50%;
+  background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;
+  font-size:13px;cursor:pointer;border:2px solid var(--surface)}
 /* Davomat akkordeoni */
 .acc summary{display:flex;align-items:center;gap:9px;cursor:pointer;list-style:none;padding:13px 16px;font-size:14px}
 .acc summary::-webkit-details-marker{display:none}
@@ -638,7 +644,44 @@ function toast(msg){
 }
 function avatarHtml(e, cls=""){
   if (!e) return `<div class="avatar ${cls}" style="background:#8DA2B5">?</div>`;
+  if (e.photo) return `<div class="avatar ${cls} has-img" style="background:${e.color}"><img src="${esc(e.photo)}" alt="" loading="lazy"></div>`;
   return `<div class="avatar ${cls}" style="background:${e.color}">${initials(e.name)}</div>`;
+}
+/* Rasm bilan avatar + tahrirlash tugmasi (kamera belgisi) */
+function photoEditHtml(e, cls="lg"){
+  const canEdit = CLOUD && (USER.role === "admin" || String(USER.id) === String(e.id));
+  if (!canEdit) return avatarHtml(e, cls);
+  return `<div class="photo-edit">${avatarHtml(e, cls)}
+    <label class="cam" title="Rasm yuklash">📷
+      <input type="file" accept="image/*" style="display:none" onchange="uploadPhoto('${e.id}', this)"></label></div>`;
+}
+/* Rasm yuklash (admin har kimga, xodim o'ziga) */
+async function uploadPhoto(empId, input){
+  const file = input.files[0]; if (!file) return;
+  if (!file.type.startsWith("image/")) { input.value=""; return toast("Faqat rasm fayli"); }
+  if (file.size > 5 * 1024 * 1024) { input.value=""; return toast("Rasm 5 MB dan katta"); }
+  toast("Rasm yuklanmoqda...");
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g,"") || "jpg";
+  const path = `${empId}/avatar.${ext}`;
+  const { error } = await sb.storage.from("avatars")
+    .upload(path, file, { upsert: true, contentType: file.type, cacheControl: "0" });
+  input.value = "";
+  if (error) return toast("Yuklanmadi: " + error.message);
+  const { data: pub } = sb.storage.from("avatars").getPublicUrl(path);
+  const url = pub.publicUrl + "?v=" + Date.now();   // kesh yangilanishi uchun
+  const { data, error: e2 } = await sb.from("profiles").update({ photo: url }).eq("id", empId).select();
+  if (e2) return toast("Saqlanmadi: " + e2.message);
+  if (!data || !data.length) return toast("Ruxsat yo'q — supabase-update-15.sql ni Run qiling");
+  const emp = empById(empId); if (emp) emp.photo = url;
+  if (String(USER.id) === String(empId)) USER.photo = url;
+  toast("Rasm yangilandi ✓"); render();
+}
+async function removePhoto(empId){
+  const { error } = await sb.from("profiles").update({ photo: null }).eq("id", empId);
+  if (error) return toast("Xatolik: " + error.message);
+  const emp = empById(empId); if (emp) emp.photo = null;
+  if (String(USER.id) === String(empId)) USER.photo = null;
+  toast("Rasm olib tashlandi"); render();
 }
 // Rahbariyat darajasi: rahbar va direktor bir xil to'liq huquqqa ega
 const isExec = r => r === "rahbar" || r === "direktor";
@@ -658,6 +701,8 @@ const OT_GRACE = 10; // daqiqa: shu oraliqdagi erta kelish/kech ketish ortiqcha 
    10 daqiqagacha farq imtiyoz — na hisoblanadi, na tasdiq so'raladi. */
 function otMinutes(a){
   if (!a.out) return 0;
+  // Yakshanba — dam kuni: ishlagan BUTUN vaqti qo'shimcha hisoblanadi
+  if (isSunday(a.date)) return Math.max(0, minutes(a.out) - minutes(a.in) - LUNCH_MAX);
   const early = Math.max(0, minutes(WORK_START) - minutes(a.in));
   const lateOut = Math.max(0, minutes(a.out) - minutes("18:00"));
   return (early > OT_GRACE ? early : 0) + (lateOut > OT_GRACE ? lateOut : 0);
@@ -665,8 +710,11 @@ function otMinutes(a){
 const LUNCH_MAX = 60; // belgilangan obed: 60 daqiqa (13:00–14:00)
 let FINE_PER_MIN = 0; // 1 daqiqa kechikish uchun jarima (admin belgilaydi)
 /* Kechikkan daqiqalar (kelish). Ruxsat bilan kechirilgan bo'lsa — 0 */
+/* Yakshanba — dam kuni. Kelgan bo'lsa bu ortiqcha mehnat: kechikish hisoblanmaydi. */
+function isSunday(dateIso){ return new Date(dateIso + "T12:00:00").getDay() === 0; }
 function lateMinutes(a){
   if (!a || a.lateExcused) return 0;
+  if (isSunday(a.date)) return 0;   // dam kuni ishga chiqqan — kechikish yo'q
   const lv = approvedLeave(a.emp, a.date);
   if (lv && (lv.kind === "late" || lv.kind === "absent")) return 0; // oldindan ruxsat berilgan
   return Math.max(0, minutes(a.in) - minutes(WORK_START));
@@ -674,6 +722,7 @@ function lateMinutes(a){
 /* Obeddan kech qaytish daqiqalari (1 soatdan ortig'i). Kechirilgan bo'lsa — 0 */
 function lunchLateMinutes(a){
   if (!a || a.lunchExcused || !a.lunchBack) return 0;
+  if (isSunday(a.date)) return 0;   // dam kunida obed nazorati yo'q
   if (approvedLeave(a.emp, a.date)) return 0; // o'sha kunga ruxsat bor
   return Math.max(0, minutes(a.lunchBack) - minutes(LUNCH_END)); // 14:00 dan keyingi ortiqcha
 }
@@ -723,13 +772,14 @@ function earnedToDate(e){
   const base = hourRate * hours;
   const planSoFar = days * PLAN_HOURS;
   const diff = hours - planSoFar;
+  const piece = (typeof pieceTotal === "function") ? pieceTotal(e.id) : 0; // donabay ish haqi
   const manualFine = sumFB(e.id,"fine");
   const fine = manualFine + lateFineSum;   // jami jarima (ALOHIDA hisob)
   const bonus = sumFB(e.id,"bonus");
   return { base, hours, days, hourRate, planSoFar, diff,
-           bonus, fine, manualFine, lateFine: lateFineSum,
-           // Maosh: faqat ishlagan soat + bonus. Jarima bu yerga ARALASHTIRILMAYDI.
-           total: base + bonus,
+           bonus, fine, manualFine, lateFine: lateFineSum, piece,
+           // Maosh: ishlagan soat + donabay ish + bonus. Jarima ARALASHTIRILMAYDI.
+           total: base + piece + bonus,
            // Jarima alohida ko'rsatiladi va alohida undiriladi
            fineTotal: fine };
 }
@@ -742,6 +792,7 @@ function effDetail(id){
   const onTime = done.filter(x => !x.doneAt || x.doneAt <= x.due);  // kun aniqligida
   const at = empAttendance(id);
   const punct = at.filter(a => !countsLate(a) && !countsLunchLate(a));
+  const sundays = at.filter(a => isSunday(a.date));   // dam kunida ishga chiqqan kunlar
   const tScore = t.length ? done.length / t.length : 0;
   const oScore = done.length ? onTime.length / done.length : 0;
   const pScore = at.length ? punct.length / at.length : 0;
@@ -752,10 +803,15 @@ function effDetail(id){
   if (done.length) parts.push([oScore, 0.2]);
   if (at.length)   parts.push([pScore, 0.2]);
   const wSum = parts.reduce((s,p) => s + p[1], 0);
-  const kpi = wSum ? Math.round(parts.reduce((s,p) => s + p[0]*p[1], 0) / wSum * 100) : 0;
+  let kpi = wSum ? Math.round(parts.reduce((s,p) => s + p[0]*p[1], 0) / wSum * 100) : 0;
+  // Yakshanba (dam kuni) ishga chiqqan har bir kun uchun +2% bonus, jami 10% gacha.
+  // Bu ortiqcha mehnat — reytingga IJOBIY ta'sir qiladi.
+  const sundayBonus = Math.min(10, sundays.length * 2);
+  if (wSum) kpi = Math.min(100, kpi + sundayBonus);
   return {
     tTotal: t.length, tDone: done.length, onTime: onTime.length,
     days: at.length, punct: punct.length, noData: wSum === 0,
+    sundays: sundays.length, sundayBonus,
     tPc: Math.round(tScore * 100), oPc: Math.round(oScore * 100), pPc: Math.round(pScore * 100),
     kpi,
   };
@@ -860,6 +916,7 @@ const IC = {
   moon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.5 14.5A8.5 8.5 0 019.5 3.5a8.5 8.5 0 1011 11z"/></svg>`,
   out:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 4h3.5A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5H15M10 8l-4 4 4 4M6 12h10"/></svg>`,
   calc:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8.5 7h7M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 16h.01"/></svg>`,
+  box:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3.3 7.5L12 12.5l8.7-5M12 12.5V21"/></svg>`,
   trophy:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 01-10 0V4zM7 6H4.5A1.5 1.5 0 003 7.5C3 10 5 11 7 11M17 6h2.5A1.5 1.5 0 0121 7.5C21 10 19 11 17 11"/></svg>`,
 };
 
@@ -951,6 +1008,10 @@ function navItems(){
   n.push({ id:"tasks", label:"Vazifalar", icon:IC.tasks });
   n.push({ id:"attendance", label:"Davomat", icon:IC.clock });
   n.push({ id:"rating", label:"Reyting", icon:IC.trophy });
+  // Donabay ish — o'zi donabay bo'lsa yoki boshqaruvchi bo'lsa
+  if (USER.piecework || USER.role === "admin" || isExec(USER.role) ||
+      (USER.role === "boshliq" && pieceEmployees().some(e => String(e.dept) === String(USER.dept))))
+    n.push({ id:"piece", label:"Donabay ish", icon:IC.box });
   n.push({ id:"finebonus", label:"Jarima / Bonus", icon:IC.money });
   if (USER.role === "admin" || isExec(USER.role)) n.push({ id:"payroll", label:"Hisob-kitob", icon:IC.calc });
   return n;
@@ -985,6 +1046,7 @@ const TITLES = {
   payroll:    ["Hisob-kitob", "Oylik maoshdan kelib chiqqan to'lov hisobi"],
   profile:    ["Xodim profili", "To'liq ma'lumot"],
   rating:     ["Reyting", "Barcha xodimlarga ochiq — KPI bo'yicha halol saralangan"],
+  piece:      ["Donabay ish", "Bajarilgan ish soniga qarab hisoblanadi"],
 };
 let PROFILE_ID = null;
 function viewEmp(id){ PROFILE_ID = id; go("profile"); }
@@ -996,7 +1058,7 @@ function render(){
   $("#pageSub").textContent = s;
   const fn = { dashboard: pgDashboard, me: pgMe, employees: pgEmployees,
                tasks: pgTasks, attendance: pgAttendance, finebonus: pgFineBonus,
-               payroll: pgPayroll, profile: pgProfile, rating: pgRating }[PAGE];
+               payroll: pgPayroll, profile: pgProfile, rating: pgRating, piece: pgPiece }[PAGE];
   $("#page").innerHTML = fn();
   renderBell();
   saveState();
@@ -1020,17 +1082,10 @@ function pgProfile(){
   const docsCard = `
     <h3 class="section-title">📄 Hujjatlar (PDF) <span>rahbariyat va xodimning o'ziga ko'rinadi</span></h3>
     <div class="card">
-      ${CLOUD ? `<div id="docsList"><div class="empty">Yuklanmoqda...</div></div>
-        ${USER.role === "admin" ? `<div style="padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:9px;align-items:center;flex-wrap:wrap">
-          <div style="width:100%">
-            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Bu fayl ichida qaysi hujjatlar bor? (bir nechtasini belgilang)</div>
-            <div class="emp-pick">${DOC_TYPES.map(d=>`
-              <label class="pick-chip"><input type="checkbox" class="docTypeChk" value="${d.id}"><span>${esc(d.name)}${d.required?" *":""}</span></label>`).join("")}</div>
-          </div>
-          <label class="btn ghost sm" style="cursor:pointer">📤 Fayl yuklash
-            <input type="file" accept="application/pdf,.pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc('${e.id}', this)"></label>
-          <span style="font-size:11.5px;color:var(--muted)">PDF yoki rasm, 10 MB gacha</span></div>` : ""}`
-      : `<div class="empty">Hujjatlar bo'limi Supabase ulanganda ishlaydi (demo rejimda mavjud emas)</div>`}
+      ${CLOUD
+        ? `<div id="docsList"><div class="empty">Yuklanmoqda...</div></div>
+           <div id="docsUpload"></div>`
+        : `<div class="empty">Hujjatlar bo'limi Supabase ulanganda ishlaydi (demo rejimda mavjud emas)</div>`}
     </div>`;
   // Pul ko'rsatkichlari: admin/rahbar har kimni; boshliq esa FAQAT o'zini ko'radi
   const seeMoney = USER.role === "admin" || isExec(USER.role) || String(e.id) === String(USER.id);
@@ -1043,7 +1098,7 @@ function pgProfile(){
   return `
     <div class="card" style="padding:18px;display:flex;gap:15px;align-items:center;flex-wrap:wrap;margin-bottom:15px">
       <button class="btn ghost sm" onclick="go('employees')">← Orqaga</button>
-      ${avatarHtml(e,"lg")}
+      ${photoEditHtml(e,"lg")}
       <div style="flex:1;min-width:170px"><b style="font-family:'Sora';font-size:17px">${esc(e.name)}</b><br>
         <span style="color:var(--muted);font-size:13px">${esc(e.pos)} ${d ? "· " + d.name : ""}</span><br>
         <span style="display:inline-block;margin-top:6px">${roleTag(e.role)} ${contractHtml}</span></div>
@@ -1124,6 +1179,21 @@ async function loadDocs(empId){
         ${st.ok ? `<span class="tag success">to'liq ✓</span>` : `<span class="tag danger">${st.missing.length} ta yetishmaydi</span>`}</b>
       ${st.missing.length ? `<div style="font-size:12px;color:var(--muted);margin-top:5px">Yetishmayapti: ${st.missing.map(m=>esc(m.name)).join(", ")}</div>` : ""}
     </div>` : "";
+  // Yuklash bloki (checkbox ro'yxati) — DOC_TYPES yuklangandan KEYIN render qilinadi
+  const up = document.getElementById("docsUpload");
+  if (up && USER.role === "admin") {
+    up.innerHTML = `<div style="padding:12px 16px;border-top:1px solid var(--line)">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:7px">
+        Bu fayl ichida qaysi hujjatlar bor? Belgilang, keyin faylni tanlang.
+        ${DOC_TYPES.length ? "" : "<b style='color:var(--danger)'>Hujjat turlari ro'yxati bo'sh — Xodimlar → 📄 Hujjatlar ro'yxati dan qo'shing.</b>"}</div>
+      <div class="emp-pick" style="margin-bottom:10px">${DOC_TYPES.map(d=>`
+        <label class="pick-chip"><input type="checkbox" class="docTypeChk" value="${d.id}"><span>${esc(d.name)}${d.required?" *":""}</span></label>`).join("")}</div>
+      <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+        <label class="btn ghost sm" style="cursor:pointer">📤 Fayl yuklash
+          <input type="file" accept="application/pdf,.pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc('${empId}', this)"></label>
+        <span style="font-size:11.5px;color:var(--muted)">PDF yoki rasm, 10 MB gacha</span></div>
+    </div>`;
+  }
   el.innerHTML = checklist + (files.length ? files.map(f => {
     const tl = typesOf(f.name);
     const title = tl.length ? tl.map(t=>esc(t.name)).join(" + ") : esc(f.name);
@@ -1164,14 +1234,25 @@ async function uploadDoc(empId, input){
     .upload(`${empId}/${stamped}`, file, { upsert: true, contentType: file.type || "application/octet-stream" });
   input.value = "";
   if (error) return toast("Yuklanmadi: " + error.message);
-  // Hujjat turini belgilash (agar tanlangan bo'lsa)
+  // Hujjat turlarini belgilash
   if (picked.length) {
-    const { error: e2 } = await sb.from("emp_docs")
-      .upsert({ emp: empId, doc_types: picked, doc_type: picked[0], file: stamped }, { onConflict: "emp,file" });
-    if (e2) toast("Turlar belgilanmadi: " + e2.message);
+    const { data: d2, error: e2 } = await sb.from("emp_docs")
+      .upsert({ emp: empId, doc_types: picked, doc_type: picked[0], file: stamped }, { onConflict: "emp,file" })
+      .select();
+    if (e2) { toast("Turlar belgilanmadi: " + e2.message); }
+    else if (!d2 || !d2.length) { toast("Turlar yozilmadi — supabase-update-15.sql ni Run qiling"); }
+    else {
+      // Mahalliy ro'yxatni darrov yangilaymiz (bazani kutmasdan)
+      EMP_DOCS = EMP_DOCS.filter(x => !(String(x.emp)===String(empId) && x.file===stamped));
+      EMP_DOCS.push({ emp: empId, file: stamped, types: picked });
+      const names = picked.map(p => DOC_TYPES.find(t=>String(t.id)===String(p))?.name).filter(Boolean);
+      toast(`Yuklandi ✓ Belgilandi: ${names.join(", ")}`);
+    }
+  } else {
+    toast("Yuklandi ✓ (hujjat turi belgilanmadi — 🏷 tugmasi bilan keyin belgilashingiz mumkin)");
   }
-  document.querySelectorAll(".docTypeChk:checked").forEach(i => i.checked = false);
-  toast("Hujjat yuklandi ✓"); loadDocs(empId);
+  await loadDocs(empId);
+  render();
 }
 async function downloadDoc(empId, name){
   const { data, error } = await sb.storage.from("docs").createSignedUrl(`${empId}/${name}`, 300);
@@ -1184,14 +1265,220 @@ async function deleteDoc(empId, name){
   toast("Hujjat o'chirildi"); loadDocs(empId);
 }
 
+/* ---------- DONABAY ISH (Karona) ---------- */
+let PIECE_JOBS = [], PIECE_ENTRIES = [];
+async function loadPiece(){
+  if (!CLOUD) return;
+  const from = monthStartIso();
+  const [pj, pe] = await Promise.all([
+    sb.from("piece_jobs").select("*").order("sort"),
+    sb.from("piece_entries").select("*").gte("date", from).order("date", { ascending:false }),
+  ]);
+  if (pj.data) PIECE_JOBS = pj.data.map(j => ({ id:j.id, name:j.name, price:+j.price, unit:j.unit||"dona", active:j.active, sort:j.sort }));
+  if (pe.data) PIECE_ENTRIES = pe.data.map(x => ({ id:x.id, emp:x.emp, date:x.date, job:x.job, qty:+x.qty, price:+x.price, note:x.note }));
+}
+function monthStartIso(){ const d = new Date(); return isoLocal(new Date(d.getFullYear(), d.getMonth(), 1)); }
+/* Donabay bo'yicha oylik jami */
+function pieceTotal(empId){
+  return PIECE_ENTRIES.filter(x => String(x.emp) === String(empId))
+    .reduce((s,x) => s + x.qty * x.price, 0);
+}
+/* Kim donabay ma'lumotini ko'ra oladi: o'zi, bo'lim boshlig'i, rahbariyat, admin */
+function canSeePiece(empId){
+  if (String(USER.id) === String(empId)) return true;
+  if (USER.role === "admin" || isExec(USER.role)) return true;
+  return USER.role === "boshliq" && String(empById(empId)?.dept) === String(USER.dept);
+}
+/* Donabay xodimlari (admin belgilaydi) */
+function pieceEmployees(){ return EMPLOYEES.filter(e => e.piecework); }
+
+function pgPiece(){
+  const isAdmin = USER.role === "admin";
+  const me = USER.piecework;
+  // Ko'rinadigan xodimlar: o'zi (agar donabay bo'lsa) + boshqaruv doirasi
+  const list = pieceEmployees().filter(e => canSeePiece(e.id));
+  const adminBar = isAdmin
+    ? `<div class="filters"><button class="btn primary" onclick="openPieceJobs()">📋 Ishlar va narxlar</button>
+       <button class="btn ghost" onclick="openPieceEmps()">👥 Kim donabay ishlaydi</button></div>` : "";
+
+  // Xodimning o'z kiritish bloki
+  const myBlock = me ? (() => {
+    const today = PIECE_ENTRIES.filter(x => String(x.emp)===String(USER.id) && x.date===TODAY);
+    const todaySum = today.reduce((s,x)=>s+x.qty*x.price,0);
+    const monthSum = pieceTotal(USER.id);
+    return `
+    <div class="grid stats" style="margin-bottom:15px">
+      <div class="card stat"><div class="lbl">${IC.money} Bugun</div><div class="val num">${fmtShort(todaySum)}</div>
+        <div class="delta" style="color:var(--muted)">${today.length} ta yozuv</div></div>
+      <div class="card stat"><div class="lbl">${IC.up} Shu oy jami</div><div class="val num" style="color:var(--success)">${fmtShort(monthSum)}</div>
+        <div class="delta" style="color:var(--muted)">donabay ish haqi</div></div>
+    </div>
+    <div class="card" style="padding:16px;margin-bottom:15px">
+      <b style="font-size:14px">➕ Bugungi ishni yozish</b>
+      <div style="font-size:12px;color:var(--muted);margin:5px 0 11px">Kechqurun qaysi ishdan nechta qilganingizni kiriting</div>
+      ${PIECE_JOBS.filter(j=>j.active).length ? `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:2;min-width:170px"><label>Ish turi</label>
+            <select id="peJob">${PIECE_JOBS.filter(j=>j.active).map(j=>`
+              <option value="${j.id}">${esc(j.name)} — ${fmtShort(j.price)}/${esc(j.unit)}</option>`).join("")}</select></div>
+          <div style="flex:1;min-width:95px"><label>Soni</label>
+            <input id="peQty" type="number" min="0" step="1" value="1"></div>
+          <div style="flex:2;min-width:150px"><label>Sana</label>
+            <input id="peDate" type="date" value="${TODAY}" max="${TODAY}"></div>
+          <button class="btn primary" onclick="addPiece()">Qo'shish</button>
+        </div>`
+        : `<div class="empty">Ishlar ro'yxati hali kiritilmagan — admin qo'shishi kerak</div>`}
+    </div>
+    <h3 class="section-title">Mening yozuvlarim</h3>
+    ${pieceTable(USER.id, true)}` ;
+  })() : "";
+
+  // Boshqaruv: har bir donabay xodim bo'yicha jamlanma
+  const others = list.filter(e => String(e.id) !== String(USER.id));
+  const mgmt = (isAdmin || isExec(USER.role) || USER.role === "boshliq") && others.length ? `
+    <h3 class="section-title" style="margin-top:18px">Donabay xodimlar (shu oy)</h3>
+    <div class="card">${others.map(e => {
+      const sum = pieceTotal(e.id);
+      const cnt = PIECE_ENTRIES.filter(x=>String(x.emp)===String(e.id)).length;
+      return `<div class="fb-item" style="cursor:pointer" onclick="openPieceEmp('${e.id}')">
+        ${avatarHtml(e,"sm")}
+        <div class="meta"><b>${esc(e.name)}</b><span>${esc(e.pos)} · ${cnt} ta yozuv</span></div>
+        <div class="amount num" style="color:var(--success)">${fmtShort(sum)}</div></div>`;
+    }).join("")}</div>` : "";
+
+  if (!me && !others.length && !isAdmin)
+    return `<div class="card empty">Sizda donabay ish yo'q</div>`;
+  return adminBar + myBlock + mgmt;
+}
+function pieceTable(empId, own){
+  const rows = PIECE_ENTRIES.filter(x => String(x.emp) === String(empId))
+    .sort((a,b)=>b.date.localeCompare(a.date));
+  if (!rows.length) return `<div class="card empty">Hali yozuv yo'q</div>`;
+  const byDate = {};
+  rows.forEach(r => { (byDate[r.date] = byDate[r.date] || []).push(r); });
+  return Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).map(date => {
+    const list = byDate[date];
+    const sum = list.reduce((s,x)=>s+x.qty*x.price,0);
+    return `<div class="card" style="margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:9px;padding:11px 15px;border-bottom:1px solid var(--line)">
+        <b style="font-size:13.5px">${uzDate(date)}</b>
+        <span class="num" style="margin-left:auto;font-weight:800;color:var(--success)">${fmtShort(sum)}</span></div>
+      ${list.map(x => { const j = PIECE_JOBS.find(y=>String(y.id)===String(x.job));
+        return `<div class="fb-item">
+          <div class="fb-icon" style="background:var(--accent-soft);color:var(--accent)">📦</div>
+          <div class="meta"><b>${j?esc(j.name):"—"}</b><span>${x.qty} ${j?esc(j.unit):"dona"} × ${fmtShort(x.price)}</span></div>
+          <div class="amount num">${fmtShort(x.qty*x.price)}</div>
+          ${(own || USER.role==="admin") ? `<button class="btn sm" style="color:var(--danger)" onclick="delPiece('${x.id}')">✕</button>` : ""}
+        </div>`; }).join("")}
+    </div>`;
+  }).join("");
+}
+function openPieceEmp(empId){
+  const e = empById(empId); if (!e || !canSeePiece(empId)) return;
+  openModal(`<h3>${esc(e.name)} — donabay ish</h3>
+    <div class="sub">Shu oy jami: <b style="color:var(--success)">${fmtShort(pieceTotal(empId))}</b></div>
+    <div style="margin-top:12px;max-height:55vh;overflow-y:auto">${pieceTable(empId, false)}</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
+}
+async function addPiece(){
+  const jobId = $("#peJob").value, qty = +$("#peQty").value || 0, date = $("#peDate").value;
+  if (!jobId) return toast("Ish turini tanlang");
+  if (qty <= 0) return toast("Sonini kiriting");
+  const job = PIECE_JOBS.find(j => String(j.id) === String(jobId));
+  const rec = { emp: USER.id, date, job: +jobId, qty, price: job.price };
+  if (CLOUD) {
+    const { data, error } = await sb.from("piece_entries")
+      .insert({ emp: USER.id, date, job: +jobId, qty, price: job.price }).select().single();
+    if (error) return toast("Xatolik: " + error.message);
+    rec.id = data.id;
+  } else rec.id = Date.now();
+  PIECE_ENTRIES.push(rec);
+  toast(`${esc(job.name)}: ${qty} ${job.unit} = ${fmtShort(qty*job.price)} qo'shildi ✓`);
+  render();
+}
+async function delPiece(id){
+  if (CLOUD) {
+    const { error } = await sb.from("piece_entries").delete().eq("id", id);
+    if (error) return toast("Xatolik: " + error.message);
+  }
+  PIECE_ENTRIES = PIECE_ENTRIES.filter(x => String(x.id) !== String(id));
+  closeModal(); toast("O'chirildi"); render();
+}
+/* ADMIN: ishlar ro'yxati va narxlari */
+function openPieceJobs(){
+  openModal(`<h3>📋 Donabay ishlar va narxlari</h3>
+    <div class="sub">Xodimlar shu ro'yxatdan tanlab, sonini kiritadi</div>
+    <div style="margin-top:12px">${PIECE_JOBS.map(j=>`
+      <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px;font-size:13px">
+        <span style="flex:1">${esc(j.name)}</span>
+        <b class="num">${fmtShort(j.price)}</b><span style="font-size:11px;color:var(--muted)">/${esc(j.unit)}</span>
+        <button class="btn sm" style="color:var(--danger)" onclick="delPieceJob('${j.id}')">✕</button>
+      </div>`).join("") || `<div class="empty" style="padding:10px">Ro'yxat bo'sh</div>`}</div>
+    <div style="border-top:1px solid var(--line);padding-top:12px;margin-top:12px">
+      <label>Ish nomi</label><input id="pjName" placeholder="masalan: Karobka yig'ish">
+      <div style="display:flex;gap:9px">
+        <div style="flex:2"><label>1 dona narxi (so'm)</label><input id="pjPrice" type="number" min="0" step="500" value="1000"></div>
+        <div style="flex:1"><label>Birlik</label><input id="pjUnit" value="dona"></div>
+      </div>
+      <button class="btn primary sm" style="margin-top:10px" onclick="addPieceJob()">Qo'shish</button>
+    </div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
+}
+async function addPieceJob(){
+  const name = $("#pjName").value.trim(), price = +$("#pjPrice").value || 0, unit = $("#pjUnit").value.trim() || "dona";
+  if (!name) return toast("Ish nomini kiriting");
+  if (CLOUD) {
+    const { data, error } = await sb.from("piece_jobs")
+      .insert({ name, price, unit, sort: PIECE_JOBS.length + 1 }).select().single();
+    if (error) return toast("Xatolik: " + error.message);
+    PIECE_JOBS.push({ id:data.id, name, price, unit, active:true, sort:PIECE_JOBS.length+1 });
+  } else PIECE_JOBS.push({ id:Date.now(), name, price, unit, active:true, sort:PIECE_JOBS.length+1 });
+  toast("Qo'shildi ✓"); openPieceJobs();
+}
+async function delPieceJob(id){
+  if (CLOUD) {
+    const { error } = await sb.from("piece_jobs").delete().eq("id", id);
+    if (error) return toast("Xatolik: " + error.message + " (bu ishga yozuvlar bog'langan bo'lishi mumkin)");
+  }
+  PIECE_JOBS = PIECE_JOBS.filter(j => String(j.id) !== String(id));
+  toast("O'chirildi"); openPieceJobs();
+}
+/* ADMIN: kim donabay ishlaydi */
+function openPieceEmps(){
+  const list = EMPLOYEES.filter(e => e.role !== "admin");
+  openModal(`<h3>👥 Kim donabay ishlaydi</h3>
+    <div class="sub">Belgilangan xodimlarda "Donabay ish" bo'limi ochiladi</div>
+    <div class="emp-pick" style="margin-top:11px;max-height:50vh">${list.map(e=>`
+      <label class="pick-chip"><input type="checkbox" class="pwChk" value="${e.id}" ${e.piecework?"checked":""}>
+        <span>${esc(e.name)}</span></label>`).join("")}</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor</button>
+    <button class="btn primary" onclick="savePieceEmps()">Saqlash</button></div>`);
+}
+async function savePieceEmps(){
+  const on = new Set([...document.querySelectorAll(".pwChk:checked")].map(i => i.value));
+  for (const e of EMPLOYEES.filter(x => x.role !== "admin")) {
+    const want = on.has(String(e.id));
+    if (!!e.piecework === want) continue;
+    if (CLOUD) {
+      const { error } = await sb.from("profiles").update({ piecework: want }).eq("id", e.id);
+      if (error) { toast("Xatolik: " + error.message); return; }
+    }
+    e.piecework = want;
+    if (String(USER.id) === String(e.id)) USER.piecework = want;
+  }
+  closeModal(); toast("Saqlandi ✓"); render();
+}
+
 /* ---------- REYTING (hammaga ochiq, KPI bo'yicha) ---------- */
 function kpiFromNums(n){
   const parts = [];
+  const sundayBonus = Math.min(10, (+n.sundays || 0) * 2);
   if (+n.t_total) parts.push([n.t_done / n.t_total, 0.6]);
   if (+n.t_done)  parts.push([n.on_time / n.t_done, 0.2]);
   if (+n.days)    parts.push([n.punct / n.days, 0.2]);
   const wSum = parts.reduce((s,p) => s + p[1], 0);
-  return wSum ? Math.round(parts.reduce((s,p) => s + p[0]*p[1], 0) / wSum * 100) : 0;
+  if (!wSum) return 0;
+  return Math.min(100, Math.round(parts.reduce((s,p) => s + p[0]*p[1], 0) / wSum * 100) + sundayBonus);
 }
 function ratingRows(list){
   const medal = i => i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `<b class="num" style="color:var(--muted)">${i+1}</b>`;
@@ -1201,7 +1488,7 @@ function ratingRows(list){
     const d = r.dept ? deptById(r.dept) : null;
     return `<div class="fb-item" style="${me ? "background:var(--accent-soft);border-radius:12px" : ""}">
       <div style="width:30px;text-align:center;font-size:17px;align-self:center">${medal(i)}</div>
-      <div class="avatar sm" style="background:${r.color};align-self:center">${initials(r.name)}</div>
+      <div style="align-self:center">${avatarHtml({ name:r.name, color:r.color, photo:r.photo }, "sm")}</div>
       <div class="meta"><b>${esc(r.name)}${me ? " (siz)" : ""} ${d ? `<span class="tag" style="background:${d.color}22;color:${d.color}">${d.name.replace(" bo'limi","")}</span>` : ""}</b>
         <span>vazifa ${r.t_done}/${r.t_total} · muddatida ${r.on_time} · vaqtida kelish ${r.punct}/${r.days} kun · ${(+r.hours).toFixed(1)} soat</span></div>
       <div class="amount num">${r.noData ? "—" : r.kpi + "%"}<small>${r.noData ? "ma'lumot yo'q" : "KPI"}</small></div>
@@ -1215,7 +1502,7 @@ function pgRating(){
   if (CLOUD) return note + `<div class="card" id="ratingList"><div class="empty">Yuklanmoqda...</div></div>`;
   const list = EMPLOYEES.filter(e => e.role === "xodim" || e.role === "boshliq").map(e => {
     const d = effDetail(e.id), earn = earnedToDate(e);
-    return { id: e.id, name: e.name, dept: e.dept, color: e.color,
+    return { id: e.id, name: e.name, dept: e.dept, color: e.color, photo: e.photo,
       t_total: d.tTotal, t_done: d.tDone, on_time: d.onTime, days: d.days, punct: d.punct,
       hours: earn.hours, kpi: d.kpi };
   }).sort((a,b) => (a.t_total||a.days?0:1) - (b.t_total||b.days?0:1) || b.kpi - a.kpi || b.hours - a.hours);
@@ -1469,7 +1756,7 @@ function personalBlock(e){
     <h3 class="section-title" style="margin-top:18px">Mening ma'lumotlarim</h3>
     <div class="grid" style="grid-template-columns:1fr 1fr">
       <div class="card" style="padding:16px">
-        <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">${avatarHtml(e,"lg")}
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">${photoEditHtml(e,"lg")}
           <div><b style="font-family:'Sora';font-size:16px">${esc(e.name)}</b><br>
             <span style="color:var(--muted);font-size:13px">${esc(e.pos)}${e.dept?" · "+esc(deptById(e.dept)?.name||""):""}</span></div></div>
         <div class="emp-mini">
@@ -2837,7 +3124,8 @@ async function loadAll(){
   FIELD_DAYS = (fd.data || []).map(f => ({ id: f.id, emp: f.emp, date: f.date, note: f.note }));
   EMPLOYEES = (pr.data || []).map(p => ({ id: p.id, name: p.name, role: p.role, dept: p.dept,
     pos: p.pos, salary: +p.salary, color: p.color, login: toShort(p.email),
-    contract: p.contract_until, fieldWork: !!p.field_work, canReassign: !!p.can_reassign }));
+    contract: p.contract_until, fieldWork: !!p.field_work, canReassign: !!p.can_reassign,
+    photo: p.photo || null, piecework: !!p.piecework }));
   TASKS = (tk.data || []).map(t => {
     const nt = { id: t.id, title: t.title, desc: t.descr, emp: t.emp,
       emps: t.emps || null, by: t.created_by, due: t.due, status: t.status, doneAt: t.done_at,
@@ -2849,7 +3137,7 @@ async function loadAll(){
     if (p && Date.now() - p.at < 12000) { nt.status = p.status; if (p.status === "done") nt.doneAt = nt.doneAt || TODAY; }
     return nt;
   });
-  loadDocTypes(); loadLeaves();
+  loadDocTypes(); loadLeaves(); loadPiece();
   FINEBONUS = (fb.data || []).map(f => ({ id: f.id, emp: f.emp, type: f.type,
     amount: +f.amount, reason: f.reason, date: f.date }));
   ATTENDANCE = (at.data || []).map(a => ({ id: a.id, emp: a.emp, date: a.date,
