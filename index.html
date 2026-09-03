@@ -1994,11 +1994,14 @@ function ctLedger(cid){
   const ords = SNAB_ORDERS.filter(o => String(o.contractor)===String(cid));
   const numOf = id => ords.find(o=>String(o.id)===String(id))?.num || "";
   const ev = [];
-  SNAB_ITEMS.filter(i => i.received && ords.some(o=>String(o.id)===String(i.ord))).forEach(i =>
-    ev.push({ date:(i.receivedAt||i.at||"").slice(0,10) || TODAY, ord:numOf(i.ord), desc:`${i.name} — ${i.qty} × ${fmtMoney(i.price)}`, goods:i.qty*i.price, pay:0 }));
-  SNAB_PAYS.filter(p => p.status==="confirmed" && ords.some(o=>String(o.id)===String(p.ord))).forEach(p =>
-    ev.push({ date:(p.confirmedAt||p.paidAt||p.at||"").slice(0,10) || TODAY, ord:numOf(p.ord), desc:`To'lov: ${p.purpose||""}`, goods:0, pay:p.amount }));
-  ev.sort((a,b)=>a.date.localeCompare(b.date));
+  const tsOf = v => { if (!v) return TODAY + "T00:00:00"; const d = new Date(v); if (isNaN(d)) return v;
+    return isoLocal(d) + "T" + String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0") + ":" + String(d.getSeconds()).padStart(2,"0"); };
+  SNAB_ITEMS.filter(i => i.received && ords.some(o=>String(o.id)===String(i.ord))).forEach(i => { const ts = tsOf(i.receivedAt||i.at);
+    ev.push({ ts, date:ts.slice(0,10), time:ts.slice(11,16), ord:numOf(i.ord), desc:`${i.name} — ${i.qty} × ${fmtMoney(i.price)}`, goods:i.qty*i.price, pay:0 }); });
+  SNAB_PAYS.filter(p => p.status==="confirmed" && ords.some(o=>String(o.id)===String(p.ord))).forEach(p => { const ts = tsOf(p.confirmedAt||p.paidAt||p.at);
+    ev.push({ ts, date:ts.slice(0,10), time:ts.slice(11,16), ord:numOf(p.ord), desc:`To'lov: ${p.purpose||""}`, goods:0, pay:p.amount }); });
+  // Aniq VAQT bo'yicha (soat-daqiqa) — bir kunda bir nechta harakat bo'lsa to'g'ri tartibda
+  ev.sort((a,b)=>a.ts.localeCompare(b.ts));
   let bal = 0;
   return ev.map(e => { bal += e.pay - e.goods; return { ...e, bal }; });
 }
@@ -2009,13 +2012,13 @@ function ledgerHtml(cid, compact){
   return `<div class="card ledger">
     <div class="ledger-head"><span>Sana</span><span>Zakaz</span><span>Tavsif</span><span class="r">Tovar</span><span class="r">To'lov</span><span class="r">Qoldiq</span></div>
     ${rows.map(r=>`<div class="ledger-row">
-      <span class="num">${uzDate(r.date)}</span><span class="num muted">${esc(r.ord)}</span><span>${esc(r.desc)}</span>
+      <span class="num">${uzDate(r.date)}<br><small class="muted">${r.time||""}</small></span><span class="num muted">${esc(r.ord)}</span><span>${esc(r.desc)}</span>
       <span class="r num" style="color:var(--danger)">${r.goods?"−"+fmtMoney(r.goods):""}</span>
       <span class="r num" style="color:var(--success)">${r.pay?"+"+fmtMoney(r.pay):""}</span>
       <span class="r num" style="font-weight:800;color:${r.bal>0?"var(--success)":r.bal<0?"var(--danger)":""}">${r.bal>0?"+":r.bal<0?"−":""}${fmtMoney(Math.abs(r.bal))}</span></div>`).join("")}
     <div class="ledger-foot"><span>JAMI</span><span></span><span></span>
-      <span class="r num" style="color:var(--danger)">−${fmtMoney(b.goods)}</span>
-      <span class="r num" style="color:var(--success)">+${fmtMoney(b.paid)}</span>
+      <span class="r num" style="color:var(--danger)">${b.goods?"−"+fmtMoney(b.goods):"0"}</span>
+      <span class="r num" style="color:var(--success)">${b.paid?"+"+fmtMoney(b.paid):"0"}</span>
       <span class="r num" style="font-weight:900;color:${b.balance>0?"var(--success)":b.balance<0?"var(--danger)":""}">${b.balance>0?"+":b.balance<0?"−":""}${fmtMoney(Math.abs(b.balance))}</span></div>
     <div style="padding:8px 14px;font-size:11.5px;color:var(--muted)">− tovar qabul qilindi (bizning qarz oshadi) · + to'lov tasdiqlandi (qarz kamayadi) · Qoldiq: + biz plyusdamiz, − biz qarzdormiz</div>
   </div>`;
@@ -2141,7 +2144,8 @@ function snabOrderView(oid){
   const goodsSum = items.reduce((s,i)=>s+i.qty*i.price,0), recvSum = items.filter(i=>i.received).reduce((s,i)=>s+i.qty*i.price,0);
   const paySum = pays.filter(p=>p.status==="confirmed").reduce((s,p)=>s+p.amount,0);
   const b = c ? ctBalance(c.id) : {balance:0};
-  const canSnab = ["admin","snab"].includes(r), canZav = ["admin","zavsklad"].includes(r), canKas = ["admin","kassir"].includes(r);
+  const isClosed = o.status === "closed";
+  const canSnab = ["admin","snab"].includes(r) && !isClosed, canZav = ["admin","zavsklad"].includes(r) && !isClosed, canKas = ["admin","kassir"].includes(r) && !isClosed;
   // TOVARLAR bloki (kassirga ko'rinmaydi)
   const goodsBlock = seesGoods() ? `<div class="card" style="padding:14px 16px;margin-bottom:12px">
       <b style="font-size:13.5px">📦 Tovarlar</b> <span style="color:var(--muted);font-size:12px">jami ${fmtMoney(goodsSum)} · qabul qilingan ${fmtMoney(recvSum)}</span>
@@ -2181,7 +2185,7 @@ function snabOrderView(oid){
           <div style="max-width:78%;background:${sys?"var(--gold-soft, rgba(212,160,23,.12))":mine?"var(--accent-soft)":"var(--surface2)"};border-radius:12px;padding:7px 11px">
             <b style="font-size:11.5px">${esc(nm)}</b> <span style="font-size:10.5px;color:var(--muted)">${(m.at||"").slice(5,16).replace("T"," ")}</span>
             <div style="font-size:13px;white-space:pre-wrap;margin-top:2px">${esc(m.text)}</div></div></div>`; }).join("") || `<div style="color:var(--muted);font-size:12px">Xabar yo'q</div>`}</div>
-      ${!isArchive() ? `<div style="display:flex;gap:7px;margin-top:10px"><input id="snMsg" placeholder="Xabar yozing..." onkeydown="if(event.key==='Enter')sendSnabMsg('${o.id}')"><button class="btn primary sm" onclick="sendSnabMsg('${o.id}')">Yuborish</button></div>` : ""}
+      ${!isArchive() && !isClosed ? `<div style="display:flex;gap:7px;margin-top:10px"><input id="snMsg" placeholder="Xabar yozing..." onkeydown="if(event.key==='Enter')sendSnabMsg('${o.id}')"><button class="btn primary sm" onclick="sendSnabMsg('${o.id}')">Yuborish</button></div>` : (isClosed ? `<div style="font-size:12px;color:var(--muted);margin-top:8px">Zakaz yopilgan — o'zgartirish uchun "↩ Qayta ochish"</div>` : "")}
     </div>`;
   // Zakaz cheki: tovar va to'lovlar bir ko'rinishda
   const receipt = `<div class="card" style="padding:12px 16px;margin-bottom:12px;background:var(--surface2)">
@@ -2195,7 +2199,8 @@ function snabOrderView(oid){
       <div style="flex:1;min-width:140px"><b style="font-family:'Sora';font-size:16px">${esc(o.num)}</b> ${o.title?"· "+esc(o.title):""}<br>
         <span style="color:var(--muted);font-size:12px">${c?esc(c.name)+" · ":""}${uzDate(o.at.slice(0,10))}</span></div>
       <span class="tag ${cls}">${lbl}</span>
-      ${canSnab && o.status!=="closed" && !isArchive() ? `<button class="btn ghost sm" title="Zakazni yopish" onclick="closeSnabOrder('${o.id}')">✔</button>` : ""}
+      ${canSnab && !isArchive() ? `<button class="btn ghost sm" title="Zakazni yopish" onclick="closeSnabOrder('${o.id}')">✔ Yopish</button>` : ""}
+      ${isClosed && ["admin","snab"].includes(r) && !isArchive() ? `<button class="btn ghost sm" onclick="reopenSnabOrder('${o.id}')">↩ Qayta ochish</button>` : ""}
     </div>${receipt}${goodsBlock}${payBlock}${chat}`;
 }
 /* Amallar */
@@ -2239,6 +2244,9 @@ async function addSnabItem(oid){
   render();
 }
 async function delSnabItem(id){
+  const i = SNAB_ITEMS.find(x=>String(x.id)===String(id));
+  if (!confirm(`«${i?i.name:""}» tovari zakazdan O'CHIRILSINMI?\n\nBu qaytarib bo'lmaydi. Chatga izoh qoladi.`)) return;
+  await snabMsg(i.ord, `✗ Tovar o'chirildi: ${i.name} — ${i.qty} × ${fmtMoney(i.price)}`, "goods", "goods");
   if (CLOUD) { const { error } = await sb.from("snab_items").delete().eq("id", id); if (error) return toast("Xatolik: "+error.message); }
   SNAB_ITEMS = SNAB_ITEMS.filter(i=>String(i.id)!==String(id)); render();
 }
@@ -2289,6 +2297,10 @@ async function closeSnabOrder(id){
   const warn = st !== "done" ? `\n\n⚠️ DIQQAT: ${SNAB_ST[st][1]}. Yopilsa ham qabul qilinmagan tovar va tasdiqlanmagan to'lov hisobga kirmaydi.` : "";
   if (!confirm("Zakaz yopilsinmi?" + warn)) return;
   await setSnabStatus(o, "closed"); await snabMsg(o.id, "Zakaz yopildi", "sys", "all"); render();
+}
+async function reopenSnabOrder(id){
+  const o = SNAB_ORDERS.find(x=>String(x.id)===String(id)); if (!o) return;
+  await setSnabStatus(o, "new"); await snabMsg(o.id, "Zakaz qayta ochildi", "sys", "all"); toast("Zakaz qayta ochildi"); render();
 }
 async function sendSnabMsg(oid){
   const inp = $("#snMsg"); const t = inp.value.trim(); if (!t) return; inp.value = "";
