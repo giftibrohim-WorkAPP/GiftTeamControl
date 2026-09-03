@@ -272,6 +272,11 @@ tr.rowhover:hover td{background:var(--surface2)}
 
 /* ---------- Mobil ---------- */
 .bottom-nav{display:none}
+.more-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:12px}
+.more-item{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 6px;border-radius:14px;
+  border:1px solid var(--line);background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.more-item svg{width:24px;height:24px}
+.more-item.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 @media(max-width:820px){
   .shell{grid-template-columns:1fr}
   .sidebar{display:none}
@@ -1086,12 +1091,26 @@ function navItems(){
   if (USER.role === "admin" || isExec(USER.role)) n.push({ id:"payroll", label:"Hisob-kitob", icon:IC.calc });
   return n;
 }
+function openMoreNav(){
+  const items = navItems().slice(4);
+  openModal(`<h3>Bo'limlar</h3>
+    <div class="more-grid">${items.map(it => `
+      <button class="more-item ${PAGE===it.id?"active":""}" onclick="closeModal(); go('${it.id}')">${it.icon}<span>${esc(it.label)}</span></button>`).join("")}</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
+}
 function renderNav(){
   const items = navItems();
   const mk = it => `<button class="nav-btn ${PAGE===it.id?"active":""}" onclick="go('${it.id}')">${it.icon}<span>${it.label}</span></button>`;
   $("#sideNav").innerHTML = items.map(mk).join("");
-  $("#bottomNav").innerHTML = items.map(it =>
-    `<button class="${PAGE===it.id?"active":""}" onclick="go('${it.id}')">${it.icon}<span>${it.label.split(" ")[0]}</span></button>`).join("");
+  // Telefon: 4 ta asosiy + "Yana" (qolganlari oynada). Faol sahifa "yana" ichida bo'lsa, "Yana" faol ko'rinadi.
+  const MAX_BOTTOM = 4;
+  const main = items.slice(0, MAX_BOTTOM), more = items.slice(MAX_BOTTOM);
+  const moreActive = more.some(it => it.id === PAGE);
+  $("#bottomNav").innerHTML = main.map(it =>
+    `<button class="${PAGE===it.id?"active":""}" onclick="go('${it.id}')">${it.icon}<span>${it.label.split(" ")[0]}</span></button>`).join("")
+    + (more.length ? `<button class="${moreActive?"active":""}" onclick="openMoreNav()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+        <span>Yana</span></button>` : "");
   const rb = $("#resetBtn"); if (rb) rb.style.display = (USER.role === "admin" && canStore && !CLOUD) ? "flex" : "none";
   $("#sideUser").innerHTML = `${avatarHtml(USER)}
     <div class="meta"><b>${esc(USER.name)}</b><span>${roleLabel(USER.role)}</span></div>
@@ -1568,13 +1587,10 @@ async function astAnswer(qRaw){
 }
 function pgAssistant(){
   if (!(isExec(USER.role) || USER.role === "admin")) return `<div class="card empty">Assistent faqat rahbariyat uchun</div>`;
-  const quick = ["Bu hafta kim kech keldi?","Nechta bajarilmagan vazifa bor?","Bu oy nechta zakaz tushdi?","Bu oy savdo qancha bo'ldi?",
-    "O'tgan oy jarimalar","Eng yaxshi KPI kimda?","Oylar kesimida savdo","Bugun kim kelmadi?"];
   return `
     <div class="card" style="padding:16px;margin-bottom:14px">
       <b style="font-size:14px">🤖 Assistent</b>
       <div style="font-size:12.5px;color:var(--muted);margin:5px 0 10px">Dasturdagi ma'lumotlardan aniq hisoblab javob beradi. Davr (bu hafta / bu oy / o'tgan oy / avgust / oylar kesimida), xodim, bo'lim yoki kompaniya nomini qo'shib so'rang.</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${quick.map(x=>`<button class="btn ghost sm" onclick="astAsk(${JSON.stringify(x)})">${esc(x)}</button>`).join("")}</div>
       <div style="display:flex;gap:8px">
         <input id="astInput" placeholder="Savolingizni yozing..." onkeydown="if(event.key==='Enter')astAsk()">
         <button class="btn primary" onclick="astAsk()">So'rash</button>
