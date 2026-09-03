@@ -987,6 +987,7 @@ const IC = {
   moon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.5 14.5A8.5 8.5 0 019.5 3.5a8.5 8.5 0 1011 11z"/></svg>`,
   out:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 4h3.5A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5H15M10 8l-4 4 4 4M6 12h10"/></svg>`,
   calc:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8.5 7h7M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 16h.01"/></svg>`,
+  truck: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>`,
   bot:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="12" rx="3"/><path d="M12 8V4M8 4h8M8 14h.01M16 14h.01M9 17h6"/></svg>`,
   cart:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 002 1.6h9.7a2 2 0 002-1.6L23 6H6"/></svg>`,
   box:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3.3 7.5L12 12.5l8.7-5M12 12.5V21"/></svg>`,
@@ -1017,6 +1018,14 @@ function notifList(){
   LEAVE_REQS.filter(r => String(r.emp)===String(USER.id) && r.status !== "pending" && r.date >= TODAY).forEach(r =>
     items.push({ ic: r.status==="approved"?"✅":"❌", cls: r.status==="approved"?"success":"danger",
       text:`${uzDate(r.date)} — ${leaveKindLabel(r.kind)} so'rovingiz ${r.status==="approved"?"tasdiqlandi":"rad etildi"}`, go:"me" }));
+  if (canSeeSnab()) {
+    const r = snabRole();
+    if (["admin","zavsklad"].includes(r)) SNAB_ITEMS.filter(i=>!i.received).forEach(i => { const o = SNAB_ORDERS.find(x=>String(x.id)===String(i.ord)); if (o && o.status!=="closed") items.push({ ic:"📦", cls:"gold", text:`${o.num}: ${i.name} — qabul qilishni kutmoqda`, go:"snab" }); });
+    if (["admin","kassir"].includes(r)) SNAB_PAYS.filter(p=>p.status==="requested").forEach(p => { const o = SNAB_ORDERS.find(x=>String(x.id)===String(p.ord)); if (o) items.push({ ic:"💳", cls:"gold", text:`${o.num}: ${fmtMoney(p.amount)} to'lov so'raldi — ${p.purpose||""}`, go:"snab" }); });
+    if (["admin","snab"].includes(r)) SNAB_PAYS.filter(p=>p.status==="paid").forEach(p => { const o = SNAB_ORDERS.find(x=>String(x.id)===String(p.ord)); if (o) items.push({ ic:"⏳", cls:"info", text:`${o.num}: ${fmtMoney(p.amount)} to'landi — postavshik tasdig'i kutilmoqda`, go:"snab" }); });
+  }
+  (() => { const byEmp = {}; PIECE_ENTRIES.filter(p => p.status==="pending" && canApproveOT({emp:p.emp})).forEach(p => { byEmp[p.emp]=(byEmp[p.emp]||0)+1; });
+    Object.entries(byEmp).forEach(([id,n]) => items.push({ ic:"📦", cls:"gold", text:`${empById(id)?.name.split(" ")[0]} — ${n} ta donabay yozuv tasdiq kutmoqda`, go:"piece" })); })();
   ATTENDANCE.filter(a => a.inField && a.inAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
     items.push({ ic:"🚶", cls:"info", text:`${empById(a.emp).name.split(" ")[0]} — tashqaridan kelishni tasdiqlash (${uzDate(a.date)})`, go:"attendance" }));
   ATTENDANCE.filter(a => a.outField && a.outAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
@@ -1082,6 +1091,8 @@ function navItems(){
   n.push({ id:"attendance", label:"Davomat", icon:IC.clock });
   n.push({ id:"rating", label:"Reyting", icon:IC.trophy });
   if (canSeeOrders()) n.push({ id:"orders", label:"Zakazlar", icon:IC.cart });
+  if (stockAccess() !== "none") n.push({ id:"stock", label:"Sklad", icon:IC.box });
+  if (canSeeSnab()) n.push({ id:"snab", label:"Snabjeniya", icon:IC.truck });
   if (isExec(USER.role) || USER.role === "admin") n.push({ id:"assistant", label:"Assistent", icon:IC.bot });
   // Donabay ish — o'zi donabay bo'lsa yoki boshqaruvchi bo'lsa
   if (USER.piecework || USER.role === "admin" || isExec(USER.role) ||
@@ -1137,6 +1148,8 @@ const TITLES = {
   rating:     ["Reyting", "Barcha xodimlarga ochiq — KPI bo'yicha halol saralangan"],
   piece:      ["Donabay ish", "Bajarilgan ish soniga qarab hisoblanadi"],
   orders:     ["Zakazlar", "Mijozlardan tushgan buyurtmalar va savdo"],
+  stock:      ["Sklad", "Tovar kirimi, otgruzka va qoldiq"],
+  snab:       ["Snabjeniya", "Kontragentlar, zakazlar, to'lovlar va balans"],
   assistant:  ["Assistent", "Ma'lumotlardan aniq hisoblab javob beradi"],
 };
 let PROFILE_ID = null;
@@ -1149,7 +1162,7 @@ function render(){
   $("#pageSub").textContent = s;
   const fn = { dashboard: pgDashboard, me: pgMe, employees: pgEmployees,
                tasks: pgTasks, attendance: pgAttendance, finebonus: pgFineBonus,
-               payroll: pgPayroll, profile: pgProfile, rating: pgRating, piece: pgPiece, orders: pgOrders, assistant: pgAssistant }[PAGE];
+               payroll: pgPayroll, profile: pgProfile, rating: pgRating, piece: pgPiece, orders: pgOrders, assistant: pgAssistant, stock: pgStock, snab: pgSnab }[PAGE];
   $("#page").innerHTML = fn();
   renderBell();
   saveState();
@@ -1875,6 +1888,469 @@ async function delProduct(id){
   toast("O'chirildi"); openProducts();
 }
 
+/* ================= SNABJENIYA (ta'minot) ================= */
+let CONTRACTORS = [], SNAB_ORDERS = [], SNAB_ITEMS = [], SNAB_PAYS = [], SNAB_MSGS = [];
+let SNAB_VIEW = { page: "list", contractor: null, order: null }; // list | contractor | order | balance
+function snabRole(){
+  if (USER.role === "admin" || isExec(USER.role)) return "admin";
+  return USER.snabRole || "none";
+}
+function canSeeSnab(){ return snabRole() !== "none"; }
+const seesGoods = () => ["admin","snab","zavsklad"].includes(snabRole());
+const seesPay   = () => ["admin","snab","kassir"].includes(snabRole());
+async function loadSnab(){
+  if (!CLOUD || !canSeeSnab()) return;
+  const qs = [
+    sb.from("contractors").select("*").order("name"),
+    sb.from("snab_orders").select("*").order("created_at", { ascending:false }),
+    sb.from("snab_msgs").select("*").order("created_at"),
+    seesGoods() ? sb.from("snab_items").select("*") : Promise.resolve({ data: [] }),
+    seesPay()   ? sb.from("snab_payments").select("*").order("created_at") : Promise.resolve({ data: [] }),
+  ];
+  const [ct, so, sm, si, sp] = await Promise.all(qs);
+  if (ct.data) CONTRACTORS = ct.data.map(c => ({ id:c.id, name:c.name, phone:c.phone, note:c.note, token:c.token, active:c.active }));
+  if (so.data) SNAB_ORDERS = so.data.map(o => ({ id:o.id, num:o.num, contractor:o.contractor, title:o.title, status:o.status, by:o.created_by, at:o.created_at }));
+  if (sm.data) SNAB_MSGS = sm.data.map(m => ({ id:m.id, ord:m.ord, author:m.author, authorName:m.author_name, text:m.text, kind:m.kind, scope:m.scope, at:m.created_at }));
+  if (si.data) SNAB_ITEMS = si.data.map(i => ({ id:i.id, ord:i.ord, name:i.name, qty:+i.qty, price:+i.price, received:i.received }));
+  if (sp.data) SNAB_PAYS = sp.data.map(p => ({ id:p.id, ord:p.ord, amount:+p.amount, purpose:p.purpose, status:p.status, reqBy:p.requested_by, paidBy:p.paid_by, paidAt:p.paid_at, at:p.created_at }));
+}
+/* Kontragent balansi: to'langan (tasdiqlangan) − qabul qilingan tovar.
+   + → biz PLYUSDAMIZ (postavshik bizga qarz), − → biz QARZDORMIZ */
+function ctBalance(cid){
+  const ords = SNAB_ORDERS.filter(o => String(o.contractor)===String(cid)).map(o=>String(o.id));
+  const goods = SNAB_ITEMS.filter(i => ords.includes(String(i.ord)) && i.received).reduce((s,i)=>s+i.qty*i.price,0);
+  const paid = SNAB_PAYS.filter(p => ords.includes(String(p.ord)) && p.status==="confirmed").reduce((s,p)=>s+p.amount,0);
+  return { goods, paid, balance: paid - goods };
+}
+function balTag(b, big){
+  const cls = b > 0 ? "success" : b < 0 ? "danger" : "muted";
+  const txt = b > 0 ? `+${fmtMoney(b)} plyus` : b < 0 ? `−${fmtMoney(-b)} qarz` : "0 · teng";
+  return `<span class="tag ${cls}" style="${big?"font-size:13px;padding:6px 11px":""}">${txt}</span>`;
+}
+const SNAB_ST = { new:["gold","Yangi"], goods_ok:["info","Tovar qabul qilindi"], pay_requested:["gold","To'lov so'raldi"], paid:["info","To'landi — tasdiq kutilmoqda"], confirmed:["success","Yakunlandi ✓"], closed:["muted","Yopilgan"] };
+function snabGo(page, id){ SNAB_VIEW = { page, contractor: page==="contractor"?id:SNAB_VIEW.contractor, order: page==="order"?id:null }; render(); }
+
+function pgSnab(){
+  if (!canSeeSnab()) return `<div class="card empty">Snabjeniya bo'limiga ruxsatingiz yo'q</div>`;
+  const r = snabRole();
+  const roleTag = `<span class="tag info">${ {admin:"rahbariyat",snab:"ta'minotchi",kassir:"kassir",zavsklad:"zavsklad"}[r] }</span>`;
+  const nav = `<div class="filters">
+    <button class="btn ${SNAB_VIEW.page==="list"?"primary":"ghost"} sm" onclick="snabGo('list')">👥 Kontragentlar</button>
+    <button class="btn ${SNAB_VIEW.page==="balance"?"primary":"ghost"} sm" onclick="snabGo('balance')">⚖️ Debit / Kredit</button>
+    <button class="btn ${SNAB_VIEW.page==="orders"?"primary":"ghost"} sm" onclick="snabGo('orders')">📋 Barcha zakazlar</button>
+    ${USER.role==="admin" ? `<button class="btn ghost sm" onclick="openSnabRoles()">🔑 Rollar</button>` : ""}
+    <span style="margin-left:auto">${roleTag}</span></div>`;
+  if (SNAB_VIEW.page === "order") return nav + snabOrderView(SNAB_VIEW.order);
+  if (SNAB_VIEW.page === "contractor") return nav + snabContractorView(SNAB_VIEW.contractor);
+  if (SNAB_VIEW.page === "balance") {
+    const rows = CONTRACTORS.map(c => ({ c, b: ctBalance(c.id) }));
+    const plus = rows.filter(x=>x.b.balance>0).reduce((s,x)=>s+x.b.balance,0);
+    const minus = rows.filter(x=>x.b.balance<0).reduce((s,x)=>s-x.b.balance,0);
+    return nav + `<div class="grid stats" style="margin-bottom:14px">
+      <div class="card stat"><div class="lbl">${IC.up} Bizning plyus</div><div class="val num" style="color:var(--success);font-size:19px">${fmtMoney(plus)}</div><div class="delta" style="color:var(--muted)">postavshiklar bizga qarz</div></div>
+      <div class="card stat"><div class="lbl">${IC.down} Bizning qarz</div><div class="val num" style="color:var(--danger);font-size:19px">${fmtMoney(minus)}</div><div class="delta" style="color:var(--muted)">biz postavshiklarga qarz</div></div>
+      <div class="card stat"><div class="lbl">${IC.money} Sof</div><div class="val num" style="font-size:19px;color:${plus-minus>=0?"var(--success)":"var(--danger)"}">${plus-minus>=0?"+":"−"}${fmtMoney(Math.abs(plus-minus))}</div></div></div>
+      ${seesGoods()&&seesPay() ? "" : `<div class="tag muted" style="margin-bottom:10px">Balans to'liq hisob uchun tovar va to'lov ma'lumoti kerak — sizning rolingizda qisman ko'rinadi</div>`}
+      <div class="card">${rows.sort((a,b)=>a.b.balance-b.b.balance).map(({c,b})=>`
+        <div class="fb-item" style="cursor:pointer" onclick="snabGo('contractor','${c.id}')">
+          <div class="fb-icon" style="background:var(--accent-soft);color:var(--accent)">🏭</div>
+          <div class="meta"><b>${esc(c.name)}</b><span>tovar ${fmtMoney(b.goods)} · to'langan ${fmtMoney(b.paid)}</span></div>
+          ${balTag(b.balance)}</div>`).join("") || `<div class="empty">Kontragent yo'q</div>`}</div>`;
+  }
+  if (SNAB_VIEW.page === "orders") {
+    const list = SNAB_ORDERS.slice().sort((a,b)=>b.at.localeCompare(a.at));
+    return nav + `<div class="card">${list.map(o=>snabOrderRow(o)).join("") || `<div class="empty">Zakaz yo'q</div>`}</div>`;
+  }
+  // list
+  const canAdd = ["admin","snab"].includes(r);
+  return nav + `${canAdd ? `<div class="card" style="padding:14px 16px;margin-bottom:14px;display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end">
+      <div style="flex:2;min-width:160px"><label>Yangi kontragent</label><input id="ctName" placeholder="Postavshik nomi"></div>
+      <div style="flex:1;min-width:120px"><label>Telefon</label><input id="ctPhone" placeholder="+998"></div>
+      <button class="btn primary" onclick="addContractor()">Qo'shish</button></div>` : ""}
+    <div class="card">${CONTRACTORS.map(c => { const b = ctBalance(c.id); const n = SNAB_ORDERS.filter(o=>String(o.contractor)===String(c.id)).length;
+      const open = SNAB_ORDERS.filter(o=>String(o.contractor)===String(c.id) && !["confirmed","closed"].includes(o.status)).length;
+      return `<div class="fb-item" style="cursor:pointer" onclick="snabGo('contractor','${c.id}')">
+        <div class="fb-icon" style="background:var(--accent-soft);color:var(--accent)">🏭</div>
+        <div class="meta"><b>${esc(c.name)}</b><span>${n} zakaz${open?` · <span style="color:var(--gold)">${open} ochiq</span>`:""}${c.phone?" · "+esc(c.phone):""}</span></div>
+        ${balTag(b.balance)}</div>`; }).join("") || `<div class="empty">Kontragent yo'q — yuqoridan qo'shing</div>`}</div>`;
+}
+function snabOrderRow(o){
+  const c = CONTRACTORS.find(x=>String(x.id)===String(o.id===o.id&&o.contractor));
+  const [cls,lbl] = SNAB_ST[o.status] || ["muted",o.status];
+  const goods = SNAB_ITEMS.filter(i=>String(i.ord)===String(o.id)).reduce((s,i)=>s+i.qty*i.price,0);
+  const pays = SNAB_PAYS.filter(p=>String(p.ord)===String(o.id) && p.status!=="rejected").reduce((s,p)=>s+p.amount,0);
+  const unread = SNAB_MSGS.filter(m=>String(m.ord)===String(o.id)).length;
+  return `<div class="fb-item" style="cursor:pointer" onclick="snabGo('order','${o.id}')">
+    <div class="fb-icon" style="background:var(--surface2)">📋</div>
+    <div class="meta"><b>${esc(o.num)} ${o.title?"· "+esc(o.title):""}</b>
+      <span>${c?esc(c.name)+" · ":""}${uzDate(o.at.slice(0,10))}${seesGoods()&&goods?" · tovar "+fmtMoney(goods):""}${seesPay()&&pays?" · to'lov "+fmtMoney(pays):""} · 💬 ${unread}</span></div>
+    <span class="tag ${cls}">${lbl}</span></div>`;
+}
+function snabContractorView(cid){
+  const c = CONTRACTORS.find(x=>String(x.id)===String(cid)); if (!c) return `<div class="card empty">Topilmadi</div>`;
+  const b = ctBalance(cid);
+  const ords = SNAB_ORDERS.filter(o=>String(o.contractor)===String(cid)).sort((a,b)=>b.at.localeCompare(a.at));
+  const canAdd = ["admin","snab"].includes(snabRole());
+  const link = location.origin + location.pathname + "?sup=" + c.token;
+  return `<div class="card" style="padding:16px;margin-bottom:14px">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <button class="btn ghost sm" onclick="snabGo('list')">← Orqaga</button>
+        <div style="flex:1;min-width:150px"><b style="font-family:'Sora';font-size:17px">🏭 ${esc(c.name)}</b><br><span style="color:var(--muted);font-size:12.5px">${c.phone?esc(c.phone)+" · ":""}${ords.length} zakaz</span></div>
+        ${balTag(b.balance, true)}</div>
+      <div class="emp-mini" style="margin-top:12px">
+        <div><b class="num">${fmtMoney(b.goods)}</b><span>QABUL QILINGAN TOVAR</span></div>
+        <div><b class="num">${fmtMoney(b.paid)}</b><span>TASDIQLANGAN TO'LOV</span></div>
+        <div><b class="num" style="color:${b.balance>=0?"var(--success)":"var(--danger)"}">${b.balance>=0?"+":"−"}${fmtMoney(Math.abs(b.balance))}</b><span>${b.balance>=0?"BIZ PLYUSDAMIZ":"BIZ QARZDORMIZ"}</span></div></div>
+      ${["admin","snab"].includes(snabRole()) ? `<div style="margin-top:12px;padding:10px 12px;background:var(--surface2);border-radius:10px;font-size:12px">
+        🔗 <b>Postavshik havolasi</b> (login shart emas — faqat shu kontragent ma'lumotini ko'radi):<br>
+        <input value="${esc(link)}" readonly onclick="this.select()" style="margin-top:6px;font-size:11.5px">
+        <button class="btn ghost sm" style="margin-top:6px" onclick="navigator.clipboard.writeText('${esc(link)}').then(()=>toast('Havola nusxalandi ✓'))">📋 Nusxalash</button></div>` : ""}
+    </div>
+    ${canAdd ? `<div class="card" style="padding:14px 16px;margin-bottom:14px;display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end">
+      <div style="flex:1;min-width:180px"><label>Yangi zakaz (nomi / qisqacha)</label><input id="soTitle" placeholder="masalan: 100 dona futbolka"></div>
+      <button class="btn primary" onclick="addSnabOrder('${cid}')">➕ Zakaz ochish</button></div>` : ""}
+    <h3 class="section-title">Zakazlar va oldi-berdi</h3>
+    <div class="card">${ords.map(snabOrderRow).join("") || `<div class="empty">Zakaz yo'q</div>`}</div>`;
+}
+function snabOrderView(oid){
+  const o = SNAB_ORDERS.find(x=>String(x.id)===String(oid)); if (!o) return `<div class="card empty">Topilmadi</div>`;
+  const c = CONTRACTORS.find(x=>String(x.id)===String(o.contractor));
+  const r = snabRole(); const [cls,lbl] = SNAB_ST[o.status] || ["muted",o.status];
+  const items = SNAB_ITEMS.filter(i=>String(i.ord)===String(o.id));
+  const pays = SNAB_PAYS.filter(p=>String(p.ord)===String(o.id));
+  const msgs = SNAB_MSGS.filter(m=>String(m.ord)===String(o.id) && (m.scope==="all" || (m.scope==="goods"&&seesGoods()) || (m.scope==="pay"&&seesPay())));
+  const goodsSum = items.reduce((s,i)=>s+i.qty*i.price,0), recvSum = items.filter(i=>i.received).reduce((s,i)=>s+i.qty*i.price,0);
+  const paySum = pays.filter(p=>p.status==="confirmed").reduce((s,p)=>s+p.amount,0);
+  const b = c ? ctBalance(c.id) : {balance:0};
+  const canSnab = ["admin","snab"].includes(r), canZav = ["admin","zavsklad"].includes(r), canKas = ["admin","kassir"].includes(r);
+  // TOVARLAR bloki (kassirga ko'rinmaydi)
+  const goodsBlock = seesGoods() ? `<div class="card" style="padding:14px 16px;margin-bottom:12px">
+      <b style="font-size:13.5px">📦 Tovarlar</b> <span style="color:var(--muted);font-size:12px">jami ${fmtMoney(goodsSum)} · qabul qilingan ${fmtMoney(recvSum)}</span>
+      ${items.map(i=>`<div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;flex-wrap:wrap">
+        <span style="flex:1;min-width:120px">${esc(i.name)} — ${i.qty} × ${fmtMoney(i.price)} = <b>${fmtMoney(i.qty*i.price)}</b></span>
+        ${i.received ? '<span class="tag success">qabul qilindi ✓</span>' : (canZav && !isArchive() ? `<button class="btn success sm" onclick="recvSnabItem('${i.id}')">✓ Qabul qildim</button>` : '<span class="tag gold">zavsklad kutmoqda</span>')}
+        ${canSnab && !i.received ? `<button class="btn sm" style="color:var(--danger)" onclick="delSnabItem('${i.id}')">✕</button>` : ""}</div>`).join("") || `<div style="color:var(--muted);font-size:12px;margin-top:6px">Tovar kiritilmagan</div>`}
+      ${canSnab && !isArchive() ? `<div style="display:flex;gap:7px;margin-top:10px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:2;min-width:130px"><label>Tovar</label><input id="siName" placeholder="Futbolka oq"></div>
+        <div style="flex:1;min-width:70px"><label>Soni</label><input id="siQty" type="number" value="1" min="0.01"></div>
+        <div style="flex:1;min-width:100px"><label>Narxi</label><input id="siPrice" type="number" min="0" placeholder="0"></div>
+        <button class="btn ghost sm" onclick="addSnabItem('${o.id}')">➕ Qo'shish</button></div>` : ""}
+    </div>` : `<div class="card" style="padding:12px 16px;margin-bottom:12px;color:var(--muted);font-size:12.5px">📦 Tovar tafsilotlari sizning rolingizga ko'rsatilmaydi</div>`;
+  // TO'LOVLAR bloki (zavskladga ko'rinmaydi)
+  const payBlock = seesPay() ? `<div class="card" style="padding:14px 16px;margin-bottom:12px">
+      <b style="font-size:13.5px">💳 To'lovlar</b> <span style="color:var(--muted);font-size:12px">tasdiqlangan ${fmtMoney(paySum)}</span>
+      ${pays.map(p=>{ const st = {requested:["gold","kassir kutmoqda"],paid:["info","to'landi — postavshik tasdig'i kutilmoqda"],confirmed:["success","tasdiqlandi ✓"],rejected:["danger","rad etildi"]}[p.status];
+        return `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;flex-wrap:wrap">
+        <span style="flex:1;min-width:120px"><b>${fmtMoney(p.amount)}</b> — ${esc(p.purpose||"")} <span style="color:var(--muted);font-size:11px">${empById(p.reqBy)?.name.split(" ")[0]||""}</span></span>
+        <span class="tag ${st[0]}">${st[1]}</span>
+        ${p.status==="requested" && canKas && !isArchive() ? `<button class="btn success sm" onclick="paySnab('${p.id}')">💳 To'ladim</button><button class="btn ghost sm" onclick="rejectSnabPay('${p.id}')">✗</button>` : ""}
+        ${p.status==="paid" && r==="admin" ? `<button class="btn ghost sm" title="Postavshik o'rniga tasdiqlash" onclick="confirmSnabPayAdmin('${p.id}')">✓ tasdiq</button>` : ""}</div>`; }).join("") || `<div style="color:var(--muted);font-size:12px;margin-top:6px">To'lov yo'q</div>`}
+      ${canSnab && !isArchive() ? `<div style="display:flex;gap:7px;margin-top:10px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:1;min-width:110px"><label>Summa</label><input id="spAmt" type="number" min="0" placeholder="0"></div>
+        <div style="flex:2;min-width:150px"><label>Nima uchun</label><input id="spPurp" placeholder="masalan: 100 futbolka uchun avans"></div>
+        <button class="btn ghost sm" onclick="reqSnabPay('${o.id}')">💳 Kassirga yuborish</button></div>` : ""}
+    </div>` : `<div class="card" style="padding:12px 16px;margin-bottom:12px;color:var(--muted);font-size:12.5px">💳 To'lov tafsilotlari sizning rolingizga ko'rsatilmaydi</div>`;
+  // CHAT
+  const chat = `<div class="card" style="padding:14px 16px">
+      <b style="font-size:13.5px">💬 Chat</b>
+      <div style="max-height:320px;overflow-y:auto;margin-top:8px">${msgs.map(m=>{ const a = m.author ? empById(m.author) : null; const nm = a ? a.name.split(" ")[0] : (m.authorName || "Postavshik");
+        const mine = a && String(a.id)===String(USER.id); const sys = m.kind !== "text";
+        return `<div style="display:flex;gap:8px;margin-top:8px;${mine?"flex-direction:row-reverse":""}">
+          ${a ? avatarHtml(a,"sm") : `<div class="avatar sm" style="background:#7B5BA6">🏭</div>`}
+          <div style="max-width:78%;background:${sys?"var(--gold-soft, rgba(212,160,23,.12))":mine?"var(--accent-soft)":"var(--surface2)"};border-radius:12px;padding:7px 11px">
+            <b style="font-size:11.5px">${esc(nm)}</b> <span style="font-size:10.5px;color:var(--muted)">${(m.at||"").slice(5,16).replace("T"," ")}</span>
+            <div style="font-size:13px;white-space:pre-wrap;margin-top:2px">${esc(m.text)}</div></div></div>`; }).join("") || `<div style="color:var(--muted);font-size:12px">Xabar yo'q</div>`}</div>
+      ${!isArchive() ? `<div style="display:flex;gap:7px;margin-top:10px"><input id="snMsg" placeholder="Xabar yozing..." onkeydown="if(event.key==='Enter')sendSnabMsg('${o.id}')"><button class="btn primary sm" onclick="sendSnabMsg('${o.id}')">Yuborish</button></div>` : ""}
+    </div>`;
+  return `<div class="card" style="padding:14px 16px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn ghost sm" onclick="snabGo('contractor','${o.contractor}')">← ${c?esc(c.name):"Orqaga"}</button>
+      <div style="flex:1;min-width:140px"><b style="font-family:'Sora';font-size:16px">${esc(o.num)}</b> ${o.title?"· "+esc(o.title):""}<br>
+        <span style="color:var(--muted);font-size:12px">${uzDate(o.at.slice(0,10))} · ${empById(o.by)?.name.split(" ")[0]||""}</span></div>
+      <span class="tag ${cls}">${lbl}</span>
+      ${c ? balTag(b.balance) : ""}
+      ${canSnab && o.status!=="closed" && !isArchive() ? `<button class="btn ghost sm" onclick="closeSnabOrder('${o.id}')">Yopish</button>` : ""}
+    </div>${goodsBlock}${payBlock}${chat}`;
+}
+/* Amallar */
+async function snabMsg(ord, text, kind="text", scope="all"){
+  const rec = { ord, author: USER.id, text, kind, scope, at: new Date().toISOString() };
+  if (CLOUD) { const { data, error } = await sb.from("snab_msgs").insert({ ord, author: USER.id, text, kind, scope }).select().single(); if (error) return toast("Xatolik: "+error.message); rec.id = data.id; } else rec.id = Date.now();
+  SNAB_MSGS.push(rec);
+}
+async function setSnabStatus(o, status){
+  if (CLOUD) { const { error } = await sb.from("snab_orders").update({ status }).eq("id", o.id); if (error) return toast("Xatolik: "+error.message); }
+  o.status = status;
+}
+async function addContractor(){
+  const name = $("#ctName").value.trim(), phone = $("#ctPhone").value.trim() || null;
+  if (!name) return toast("Nomini kiriting");
+  if (CLOUD) { const { data, error } = await sb.from("contractors").insert({ name, phone }).select().single(); if (error) return toast("Xatolik: "+error.message);
+    CONTRACTORS.push({ id:data.id, name, phone, token:data.token, active:true }); }
+  else CONTRACTORS.push({ id:Date.now(), name, phone, token:Math.random().toString(36).slice(2), active:true });
+  toast("Kontragent qo'shildi ✓"); render();
+}
+async function addSnabOrder(cid){
+  const title = $("#soTitle").value.trim() || null;
+  let num = "SZ-" + String(SNAB_ORDERS.length + 1).padStart(4,"0");
+  const rec = { contractor: CLOUD?cid:+cid, title, status:"new", by:USER.id, at:new Date().toISOString() };
+  if (CLOUD) {
+    const { data: n } = await sb.rpc("snab_next_num"); if (n) num = n;
+    const { data, error } = await sb.from("snab_orders").insert({ num, contractor: cid, title, created_by: USER.id }).select().single();
+    if (error) return toast("Xatolik: "+error.message); rec.id = data.id;
+  } else rec.id = Date.now();
+  rec.num = num; SNAB_ORDERS.unshift(rec);
+  await snabMsg(rec.id, `Zakaz ochildi: ${num}${title?" — "+title:""}`, "sys", "all");
+  toast(`Zakaz ${num} ochildi`); snabGo("order", rec.id);
+}
+async function addSnabItem(oid){
+  const name = $("#siName").value.trim(), qty = +$("#siQty").value||0, price = +$("#siPrice").value||0;
+  if (!name || qty<=0) return toast("Tovar va sonini kiriting");
+  const rec = { ord: oid, name, qty, price, received:false };
+  if (CLOUD) { const { data, error } = await sb.from("snab_items").insert({ ord: oid, name, qty, price }).select().single(); if (error) return toast("Xatolik: "+error.message); rec.id = data.id; } else rec.id = Date.now();
+  SNAB_ITEMS.push(rec);
+  await snabMsg(oid, `📦 Tovar qo'shildi: ${name} — ${qty} × ${fmtMoney(price)}`, "goods", "goods");
+  render();
+}
+async function delSnabItem(id){
+  if (CLOUD) { const { error } = await sb.from("snab_items").delete().eq("id", id); if (error) return toast("Xatolik: "+error.message); }
+  SNAB_ITEMS = SNAB_ITEMS.filter(i=>String(i.id)!==String(id)); render();
+}
+async function recvSnabItem(id){
+  const i = SNAB_ITEMS.find(x=>String(x.id)===String(id)); if (!i) return;
+  if (CLOUD) { const { error } = await sb.from("snab_items").update({ received:true, received_by:USER.id, received_at:new Date().toISOString() }).eq("id", id); if (error) return toast("Xatolik: "+error.message); }
+  i.received = true;
+  await snabMsg(i.ord, `✅ Zavsklad tovarni qabul qildi: ${i.name} — ${i.qty} dona`, "goods_ok", "all");
+  const o = SNAB_ORDERS.find(x=>String(x.id)===String(i.ord));
+  if (o && SNAB_ITEMS.filter(x=>String(x.ord)===String(o.id)).every(x=>x.received) && o.status==="new") await setSnabStatus(o, "goods_ok");
+  toast("Tovar qabul qilindi ✓"); render();
+}
+async function reqSnabPay(oid){
+  const amount = +$("#spAmt").value||0, purpose = $("#spPurp").value.trim();
+  if (amount<=0) return toast("Summani kiriting"); if (!purpose) return toast("Nima uchun to'lanishini yozing");
+  const rec = { ord: oid, amount, purpose, status:"requested", reqBy:USER.id, at:new Date().toISOString() };
+  if (CLOUD) { const { data, error } = await sb.from("snab_payments").insert({ ord: oid, amount, purpose, requested_by:USER.id }).select().single(); if (error) return toast("Xatolik: "+error.message); rec.id = data.id; } else rec.id = Date.now();
+  SNAB_PAYS.push(rec);
+  await snabMsg(oid, `💳 To'lov so'rovi kassirga: ${fmtMoney(amount)} — ${purpose}`, "pay_req", "pay");
+  const o = SNAB_ORDERS.find(x=>String(x.id)===String(oid)); if (o && o.status!=="paid") await setSnabStatus(o, "pay_requested");
+  toast("Kassirga yuborildi"); render();
+}
+async function paySnab(id){
+  const p = SNAB_PAYS.find(x=>String(x.id)===String(id)); if (!p) return;
+  if (!confirm(`${fmtMoney(p.amount)} so'm to'landi deb belgilaysizmi?`)) return;
+  if (CLOUD) { const { error } = await sb.from("snab_payments").update({ status:"paid", paid_by:USER.id, paid_at:new Date().toISOString() }).eq("id", id); if (error) return toast("Xatolik: "+error.message); }
+  p.status = "paid"; p.paidBy = USER.id;
+  await snabMsg(p.ord, `💳 Kassir to'lov qildi: ${fmtMoney(p.amount)} — postavshik tasdig'i kutilmoqda`, "paid", "all");
+  const o = SNAB_ORDERS.find(x=>String(x.id)===String(p.ord)); if (o) await setSnabStatus(o, "paid");
+  toast("To'landi — postavshik tasdiqlashi kutilmoqda"); render();
+}
+async function rejectSnabPay(id){
+  const p = SNAB_PAYS.find(x=>String(x.id)===String(id)); if (!p) return;
+  if (CLOUD) { const { error } = await sb.from("snab_payments").update({ status:"rejected" }).eq("id", id); if (error) return toast("Xatolik: "+error.message); }
+  p.status = "rejected"; await snabMsg(p.ord, `✗ Kassir to'lovni rad etdi: ${fmtMoney(p.amount)}`, "pay_rej", "pay"); render();
+}
+async function confirmSnabPayAdmin(id){
+  const p = SNAB_PAYS.find(x=>String(x.id)===String(id)); if (!p) return;
+  if (CLOUD) { const { error } = await sb.from("snab_payments").update({ status:"confirmed", confirmed_at:new Date().toISOString() }).eq("id", id); if (error) return toast("Xatolik: "+error.message); }
+  p.status = "confirmed"; await snabMsg(p.ord, `✓ To'lov tasdiqlandi (admin): ${fmtMoney(p.amount)}`, "pay_confirm", "all");
+  const o = SNAB_ORDERS.find(x=>String(x.id)===String(p.ord));
+  if (o && !SNAB_PAYS.some(x=>String(x.ord)===String(o.id) && ["requested","paid"].includes(x.status))) await setSnabStatus(o, "confirmed");
+  render();
+}
+async function closeSnabOrder(id){
+  const o = SNAB_ORDERS.find(x=>String(x.id)===String(id)); if (!o || !confirm("Zakaz yopilsinmi?")) return;
+  await setSnabStatus(o, "closed"); await snabMsg(o.id, "Zakaz yopildi", "sys", "all"); render();
+}
+async function sendSnabMsg(oid){
+  const inp = $("#snMsg"); const t = inp.value.trim(); if (!t) return; inp.value = "";
+  await snabMsg(oid, t, "text", "all"); render();
+}
+function openSnabRoles(){ openAccessModal("snab_role", "snabRole", "🔑 Snabjeniya rollari", { none:"— yo'q —", snab:"📋 Ta'minotchi (snab)", kassir:"💳 Kassir", zavsklad:"📦 Zavsklad" }, "Ta'minotchi zakaz ochadi va to'lov so'raydi; kassir to'laydi (tovarni ko'rmaydi); zavsklad tovarni qabul qiladi (to'lovni ko'rmaydi)."); }
+
+/* ================= POSTAVSHIK sahifasi (?sup=TOKEN, login yo'q) ================= */
+async function supplierPage(token){
+  document.body.innerHTML = `<div style="max-width:720px;margin:0 auto;padding:16px;font-family:inherit"><div id="supRoot" class="empty">Yuklanmoqda...</div></div>`;
+  const root = document.getElementById("supRoot");
+  if (!CLOUD) { root.innerHTML = "Postavshik sahifasi faqat Supabase ulanganda ishlaydi"; return; }
+  const { data, error } = await sb.rpc("sup_view", { tok: token });
+  if (error || !data) { root.innerHTML = `<div class="card empty">Havola noto'g'ri yoki faol emas</div>`; return; }
+  const bal = (+data.paid_total) - (+data.goods_total); // + = postavshik bizga qarz
+  const st = SNAB_ST;
+  root.className = "";
+  root.innerHTML = `<div class="card" style="padding:16px;margin-bottom:12px">
+      <b style="font-family:'Sora';font-size:18px">🏭 ${esc(data.contractor.name)}</b>
+      <div style="color:var(--muted);font-size:12.5px;margin-top:3px">GM Pulse · postavshik kabineti</div>
+      <div class="emp-mini" style="margin-top:12px">
+        <div><b class="num">${fmtMoney(+data.goods_total)}</b><span>YETKAZILGAN TOVAR</span></div>
+        <div><b class="num">${fmtMoney(+data.paid_total)}</b><span>OLINGAN TO'LOV</span></div>
+        <div><b class="num" style="color:${bal>0?"var(--danger)":bal<0?"var(--success)":""}">${bal>0?"−":bal<0?"+":""}${fmtMoney(Math.abs(bal))}</b><span>${bal>0?"SIZ QARZDORSIZ":bal<0?"SIZGA QARZ":"TENG"}</span></div></div></div>
+    ${(data.orders||[]).map(o => { const [cls,lbl] = st[o.status]||["muted",o.status];
+      return `<div class="card" style="padding:14px 16px;margin-bottom:12px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(o.num)}</b> ${o.title?"· "+esc(o.title):""}<span class="tag ${cls}" style="margin-left:auto">${lbl}</span></div>
+        ${o.items.length ? `<div style="margin-top:8px;font-size:12.5px">📦 ${o.items.map(i=>`${esc(i.name)} ${i.qty}×${fmtMoney(i.price)} ${i.received?"✓":"⏳"}`).join(" · ")}</div>` : ""}
+        ${o.payments.map(p=>`<div style="margin-top:8px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">💳 <b>${fmtMoney(p.amount)}</b> ${esc(p.purpose||"")}
+          ${p.status==="paid" ? `<span class="tag info">to'landi</span><button class="btn success sm" onclick="supConfirm('${token}','${p.id}')">✓ Pul keldi</button>`
+            : p.status==="confirmed" ? '<span class="tag success">qabul qilindi ✓</span>' : p.status==="requested" ? '<span class="tag gold">to\'lov tayyorlanmoqda</span>' : '<span class="tag danger">rad</span>'}</div>`).join("")}
+        <div style="margin-top:10px;max-height:200px;overflow-y:auto">${o.msgs.map(m=>`<div style="font-size:12.5px;margin-top:5px"><b>${esc(m.author_name||"")}:</b> ${esc(m.text)} <span style="color:var(--muted);font-size:10.5px">${(m.created_at||"").slice(5,16).replace("T"," ")}</span></div>`).join("")}</div>
+        <div style="display:flex;gap:7px;margin-top:9px"><input id="sm${o.id}" placeholder="Xabar..."><button class="btn primary sm" onclick="supMsg('${token}','${o.id}')">Yuborish</button></div>
+      </div>`; }).join("") || `<div class="card empty">Hali zakaz yo'q</div>`}`;
+}
+async function supConfirm(tok, pid){
+  const { data } = await sb.rpc("sup_confirm_payment", { tok, pay_id: +pid });
+  if (!data) return toast("Tasdiqlanmadi"); toast("Rahmat, to'lov tasdiqlandi ✓"); supplierPage(tok);
+}
+async function supMsg(tok, oid){
+  const inp = document.getElementById("sm"+oid); const t = inp.value.trim(); if (!t) return;
+  const { data } = await sb.rpc("sup_msg", { tok, order_id: +oid, txt: t });
+  if (!data) return toast("Yuborilmadi"); inp.value=""; supplierPage(tok);
+}
+
+/* ================= SKLAD (ombor) ================= */
+let STOCK_ITEMS = [], STOCK_MOVES = [];
+function stockAccess(){
+  if (USER.role === "admin") return "edit";
+  if (USER.stockAccess === "edit" || USER.stockAccess === "view") return USER.stockAccess;
+  if (isExec(USER.role)) return "view";
+  return "none";
+}
+async function loadStock(){
+  if (!CLOUD || stockAccess() === "none") return;
+  const [it, mv] = await Promise.all([
+    sb.from("stock_items").select("*").order("name"),
+    sb.from("stock_moves").select("*").order("date", { ascending:false }).order("id", { ascending:false }),
+  ]);
+  if (it.data) STOCK_ITEMS = it.data.map(i => ({ id:i.id, name:i.name, color:i.color||"", unit:i.unit||"dona", active:i.active }));
+  if (mv.data) STOCK_MOVES = mv.data.map(m => ({ id:m.id, item:m.item, kind:m.kind, qty:+m.qty, price:+m.price, date:m.date, party:m.party, note:m.note, by:m.created_by }));
+}
+/* Har tovar bo'yicha qoldiq */
+function stockBalance(){
+  return STOCK_ITEMS.map(i => {
+    const mv = STOCK_MOVES.filter(m => String(m.item) === String(i.id));
+    const inQ = mv.filter(m=>m.kind==="in").reduce((s,m)=>s+m.qty,0);
+    const outQ = mv.filter(m=>m.kind==="out").reduce((s,m)=>s+m.qty,0);
+    const lastIn = mv.find(m=>m.kind==="in");
+    const inSum = mv.filter(m=>m.kind==="in").reduce((s,m)=>s+m.qty*m.price,0);
+    const avg = inQ ? inSum/inQ : 0;
+    return { ...i, inQ, outQ, left: inQ - outQ, lastPrice: lastIn?lastIn.price:0, avg, value: (inQ-outQ)*avg };
+  });
+}
+let STOCK_TAB = "balance";
+function pgStock(){
+  if (stockAccess() === "none") return `<div class="card empty">Sklad bo'limiga ruxsatingiz yo'q</div>`;
+  const canEdit = stockAccess() === "edit" && !isArchive();
+  const bal = stockBalance();
+  const totalValue = bal.reduce((s,b)=>s+b.value,0);
+  const tabs = `<div class="filters">
+    ${[["balance","📦 Qoldiq"],["in","⬇ Kirim"],["out","⬆ Otgruzka"],["history","🕓 Tarix"]].map(([k,l])=>`
+      <button class="btn ${STOCK_TAB===k?"primary":"ghost"} sm" onclick="STOCK_TAB='${k}';render()">${l}</button>`).join("")}
+    ${USER.role==="admin" ? `<button class="btn ghost sm" onclick="openStockAccess()">🔑 Ruxsatlar</button>` : ""}
+    <button class="btn ghost sm" onclick="exportStock()">⬇ Excel</button></div>`;
+  const stats = `<div class="grid stats" style="margin-bottom:14px">
+    <div class="card stat"><div class="lbl">${IC.box} Tovar turlari</div><div class="val num">${bal.filter(b=>b.left>0).length}</div><div class="delta" style="color:var(--muted)">qoldig'i borlar</div></div>
+    <div class="card stat"><div class="lbl">${IC.money} Qoldiq qiymati</div><div class="val num" style="font-size:19px">${fmtMoney(totalValue)}</div><div class="delta" style="color:var(--muted)">o'rtacha kirim narxida</div></div>
+    <div class="card stat"><div class="lbl">${IC.down} Kam qolgan</div><div class="val num" style="color:${bal.some(b=>b.left>0&&b.left<=5)?"var(--danger)":"var(--success)"}">${bal.filter(b=>b.left>0&&b.left<=5).length}</div><div class="delta" style="color:var(--muted)">5 va undan kam</div></div>
+  </div>`;
+  let body = "";
+  if (STOCK_TAB === "balance") {
+    const rows = bal.filter(b => b.inQ > 0).sort((a,b)=>a.name.localeCompare(b.name));
+    body = rows.length ? `<div class="card">${rows.map(b=>`
+      <div class="fb-item"><div class="fb-icon" style="background:var(--accent-soft);color:var(--accent)">📦</div>
+        <div class="meta"><b>${esc(b.name)}${b.color?` <span class="tag info">${esc(b.color)}</span>`:""}</b>
+          <span>kirim ${b.inQ} · chiqim ${b.outQ} · oxirgi narx ${fmtMoney(b.lastPrice)}</span></div>
+        <div class="amount num" style="color:${b.left<=0?"var(--danger)":b.left<=5?"var(--gold)":"var(--success)"}">${b.left} ${esc(b.unit)}</div>
+      </div>`).join("")}</div>` : `<div class="card empty">Skladda tovar yo'q — "Kirim" orqali qo'shing</div>`;
+  } else if (STOCK_TAB === "in" || STOCK_TAB === "out") {
+    const isIn = STOCK_TAB === "in";
+    body = canEdit ? `<div class="card" style="padding:16px">
+      <b style="font-size:14px">${isIn?"⬇ Tovar kirimi":"⬆ Otgruzka (chiqim)"}</b>
+      <div class="ord-form" style="display:grid;grid-template-columns:2fr 1fr 1fr 1.4fr;gap:8px;margin-top:11px">
+        <div><label>Tovar nomi</label><input id="stName" list="stNames" placeholder="masalan: Futbolka">
+          <datalist id="stNames">${[...new Set(STOCK_ITEMS.map(i=>i.name))].map(n=>`<option value="${esc(n)}">`).join("")}</datalist></div>
+        <div><label>Rangi</label><input id="stColor" list="stColors" placeholder="oq / qora">
+          <datalist id="stColors">${[...new Set(STOCK_ITEMS.map(i=>i.color).filter(Boolean))].map(n=>`<option value="${esc(n)}">`).join("")}</datalist></div>
+        <div><label>Soni</label><input id="stQty" type="number" min="0.01" step="1" value="1"></div>
+        <div><label>Narxi (1 dona)</label><input id="stPrice" type="number" min="0" step="1000" placeholder="0"></div>
+        <div><label>${isIn?"Kimdan keldi":"Kimga ketdi (mijoz)"}</label><input id="stParty" placeholder="${isIn?"postavshik":"mijoz / do'kon"}"></div>
+        <div><label>Sana</label><input id="stDate" type="date" value="${TODAY}" max="${TODAY}"></div>
+        <div><label>Izoh</label><input id="stNote"></div>
+        <div style="display:flex;align-items:flex-end"><button class="btn primary" style="width:100%" onclick="addStockMove('${STOCK_TAB}')">${isIn?"Kirim qilish":"Otgruzka qilish"}</button></div>
+      </div>
+      ${!isIn ? `<div style="font-size:12px;color:var(--muted);margin-top:8px">Qoldiqdan ko'p chiqarib bo'lmaydi. Mavjud: ${bal.filter(b=>b.left>0).map(b=>`${esc(b.name)}${b.color?" ("+esc(b.color)+")":""} — ${b.left}`).join(", ")||"—"}</div>` : ""}
+    </div>` : `<div class="card empty">Sizda faqat ko'rish ruxsati</div>`;
+  } else {
+    const mv = STOCK_MOVES.filter(m => inViewMonth(m.date));
+    body = mv.length ? `<div class="card">${mv.map(m => { const i = STOCK_ITEMS.find(x=>String(x.id)===String(m.item));
+      return `<div class="fb-item"><div class="fb-icon" style="background:${m.kind==="in"?"var(--success-soft, rgba(46,125,107,.12))":"var(--danger-soft, rgba(212,72,72,.12))"};color:${m.kind==="in"?"var(--success)":"var(--danger)"}">${m.kind==="in"?"⬇":"⬆"}</div>
+        <div class="meta"><b>${i?esc(i.name):"—"}${i&&i.color?` <span class="tag info">${esc(i.color)}</span>`:""}</b>
+          <span>${uzDate(m.date)} · ${m.kind==="in"?"kirim":"otgruzka"} · ${m.party?esc(m.party)+" · ":""}${empById(m.by)?.name.split(" ")[0]||""}${m.note?" · "+esc(m.note):""}</span></div>
+        <div class="amount num">${m.kind==="in"?"+":"−"}${m.qty} ${i?esc(i.unit):""}<small>${fmtMoney(m.qty*m.price)}</small></div>
+        ${canEdit && USER.role==="admin" ? `<button class="btn sm" style="color:var(--danger)" onclick="delStockMove('${m.id}')">✕</button>` : ""}
+      </div>`; }).join("")}</div>` : `<div class="card empty">${monthLabel()} da harakat yo'q</div>`;
+  }
+  return tabs + stats + body;
+}
+async function addStockMove(kind){
+  const name = $("#stName").value.trim(), color = $("#stColor").value.trim();
+  const qty = +$("#stQty").value || 0, price = +$("#stPrice").value || 0;
+  const date = $("#stDate").value, party = $("#stParty").value.trim() || null, note = $("#stNote").value.trim() || null;
+  if (!name) return toast("Tovar nomini kiriting");
+  if (qty <= 0) return toast("Sonini kiriting");
+  let item = STOCK_ITEMS.find(i => i.name.toLowerCase()===name.toLowerCase() && (i.color||"").toLowerCase()===color.toLowerCase());
+  if (kind === "out") {
+    if (!item) return toast("Bunday tovar skladda yo'q");
+    const b = stockBalance().find(x => String(x.id)===String(item.id));
+    if (b.left < qty) return toast(`Qoldiq yetarli emas — mavjud: ${b.left}`);
+  }
+  if (!item) {
+    if (CLOUD) {
+      const { data, error } = await sb.from("stock_items").insert({ name, color }).select().single();
+      if (error) return toast("Xatolik: " + error.message);
+      item = { id:data.id, name, color, unit:"dona", active:true };
+    } else item = { id:Date.now(), name, color, unit:"dona", active:true };
+    STOCK_ITEMS.push(item);
+  }
+  const rec = { item:item.id, kind, qty, price, date, party, note, by:USER.id };
+  if (CLOUD) {
+    const { data, error } = await sb.from("stock_moves").insert({ item:item.id, kind, qty, price, date, party, note, created_by:USER.id }).select().single();
+    if (error) return toast("Xatolik: " + error.message);
+    rec.id = data.id;
+  } else rec.id = Date.now();
+  STOCK_MOVES.unshift(rec);
+  toast(`${kind==="in"?"Kirim":"Otgruzka"}: ${name}${color?" ("+color+")":""} × ${qty} ✓`);
+  render();
+}
+async function delStockMove(id){
+  if (!confirm("Yozuv o'chirilsinmi?")) return;
+  if (CLOUD) { const { error } = await sb.from("stock_moves").delete().eq("id", id); if (error) return toast("Xatolik: " + error.message); }
+  STOCK_MOVES = STOCK_MOVES.filter(m => String(m.id)!==String(id)); toast("O'chirildi"); render();
+}
+function exportStock(){
+  const rows = [["Tovar","Rangi","Kirim","Chiqim","Qoldiq","Oxirgi narx","O'rtacha narx","Qoldiq qiymati"]];
+  stockBalance().forEach(b => rows.push([b.name, b.color, b.inQ, b.outQ, b.left, b.lastPrice, Math.round(b.avg), Math.round(b.value)]));
+  downloadCSV("sklad_" + TODAY, rows);
+}
+function openStockAccess(){ openAccessModal("stock_access", "stockAccess", "🔑 Sklad ruxsatlari", { none:"— yo'q —", view:"👁 Ko'radi", edit:"✏️ Kirim/otgruzka qiladi" }); }
+/* Umumiy ruxsat oynasi (zakaz, sklad, snab uchun) */
+function openAccessModal(col, field, title, lbl, extraNote){
+  const list = EMPLOYEES.filter(e => e.role !== "admin");
+  openModal(`<h3>${title}</h3><div class="sub">${extraNote||"Rahbar/direktor sukut bo'yicha ko'radi."}</div>
+    <div style="margin-top:12px;max-height:55vh;overflow-y:auto">${list.map(e=>`
+      <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px;font-size:13px">
+        ${avatarHtml(e,"sm")}<span style="flex:1">${esc(e.name)}<br><span style="color:var(--muted);font-size:11px">${esc(e.pos)}</span></span>
+        <select onchange="setAccess('${col}','${field}','${e.id}', this.value)" style="width:auto;font-size:12px">
+          ${Object.keys(lbl).map(v=>`<option value="${v}" ${(e[field]||"none")===v?"selected":""}>${lbl[v]}</option>`).join("")}</select>
+      </div>`).join("")}</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
+}
+async function setAccess(col, field, id, v){
+  const e = empById(id); if (!e) return;
+  if (CLOUD) {
+    const { data, error } = await sb.from("profiles").update({ [col]: v }).eq("id", id).select();
+    if (error) return toast("Xatolik: " + error.message);
+    if (!data || !data.length) return toast(permErr("supabase-update-19.sql"));
+  }
+  e[field] = v; toast(`${e.name.split(" ")[0]}: ${v}`); renderNav();
+}
+
 /* ---------- DONABAY ISH (Karona) ---------- */
 let PIECE_JOBS = [], PIECE_ENTRIES = [];
 async function loadPiece(){
@@ -1884,13 +2360,35 @@ async function loadPiece(){
     sb.from("piece_entries").select("*").gte("date", viewMonthStart()).lte("date", viewMonthEnd()).order("date", { ascending:false }),
   ]);
   if (pj.data) PIECE_JOBS = pj.data.map(j => ({ id:j.id, name:j.name, price:+j.price, unit:j.unit||"dona", active:j.active, sort:j.sort }));
-  if (pe.data) PIECE_ENTRIES = pe.data.map(x => ({ id:x.id, emp:x.emp, date:x.date, job:x.job, qty:+x.qty, price:+x.price, note:x.note }));
+  if (pe.data) PIECE_ENTRIES = pe.data.map(x => ({ id:x.id, emp:x.emp, date:x.date, job:x.job, qty:+x.qty, price:+x.price, note:x.note, status:x.status||'pending' }));
 }
 function monthStartIso(){ const d = new Date(); return isoLocal(new Date(d.getFullYear(), d.getMonth(), 1)); }
 /* Donabay bo'yicha oylik jami */
 function pieceTotal(empId){
-  return PIECE_ENTRIES.filter(x => String(x.emp) === String(empId))
+  return PIECE_ENTRIES.filter(x => String(x.emp) === String(empId) && x.status === "approved")
     .reduce((s,x) => s + x.qty * x.price, 0);
+}
+function piecePending(empId){
+  return PIECE_ENTRIES.filter(x => String(x.emp) === String(empId) && x.status === "pending")
+    .reduce((s,x) => s + x.qty * x.price, 0);
+}
+/* Kim tasdiqlaydi: bo'lim boshlig'i (o'z xodimi), rahbariyat, admin */
+function canApprovePiece(empId){ return canApproveOT({ emp: empId }); }
+async function decidePiece(id, status){
+  const x = PIECE_ENTRIES.find(p => String(p.id) === String(id)); if (!x) return;
+  if (!canApprovePiece(x.emp)) return toast("Sizda tasdiqlash huquqi yo'q");
+  if (CLOUD) {
+    const { data, error } = await sb.from("piece_entries").update({ status, decided_by: USER.id, decided_at: new Date().toISOString() }).eq("id", x.id).select();
+    if (error) return toast("Xatolik: " + error.message);
+    if (!data || !data.length) return toast(permErr("supabase-update-19.sql"));
+  }
+  x.status = status;
+  toast(status === "approved" ? "Tasdiqlandi ✓ — hisobga qo'shildi" : "Rad etildi");
+  render();
+}
+async function decidePieceDay(empId, date, status){
+  const list = PIECE_ENTRIES.filter(p => String(p.emp)===String(empId) && p.date===date && p.status==="pending");
+  for (const x of list) await decidePiece(x.id, status);
 }
 /* Kim donabay ma'lumotini ko'ra oladi: o'zi, bo'lim boshlig'i, rahbariyat, admin */
 function canSeePiece(empId){
@@ -1919,8 +2417,8 @@ function pgPiece(){
     <div class="grid stats" style="margin-bottom:15px">
       <div class="card stat"><div class="lbl">${IC.money} Bugun</div><div class="val num">${fmtMoney(todaySum)}</div>
         <div class="delta" style="color:var(--muted)">${today.length} ta yozuv</div></div>
-      <div class="card stat"><div class="lbl">${IC.up} Shu oy jami</div><div class="val num" style="color:var(--success)">${fmtMoney(monthSum)}</div>
-        <div class="delta" style="color:var(--muted)">donabay ish haqi</div></div>
+      <div class="card stat"><div class="lbl">${IC.up} Shu oy (tasdiqlangan)</div><div class="val num" style="color:var(--success)">${fmtMoney(monthSum)}</div>
+        <div class="delta" style="color:${piecePending(USER.id)?"var(--gold)":"var(--muted)"}">${piecePending(USER.id)?"tasdiq kutmoqda: "+fmtMoney(piecePending(USER.id)):"donabay ish haqi"}</div></div>
     </div>
     ${isArchive() ? "" : `<div class="card" style="padding:16px;margin-bottom:15px">
       <b style="font-size:14px">➕ Bugungi ishni yozish</b>`}
@@ -1949,9 +2447,10 @@ function pgPiece(){
     <div class="card">${others.map(e => {
       const sum = pieceTotal(e.id);
       const cnt = PIECE_ENTRIES.filter(x=>String(x.emp)===String(e.id)).length;
+      const pend = PIECE_ENTRIES.filter(x=>String(x.emp)===String(e.id) && x.status==="pending").length;
       return `<div class="fb-item" style="cursor:pointer" onclick="openPieceEmp('${e.id}')">
         ${avatarHtml(e,"sm")}
-        <div class="meta"><b>${esc(e.name)}</b><span>${esc(e.pos)} · ${cnt} ta yozuv</span></div>
+        <div class="meta"><b>${esc(e.name)} ${pend?`<span class="tag gold">${pend} ta tasdiq kutmoqda</span>`:""}</b><span>${esc(e.pos)} · ${cnt} ta yozuv</span></div>
         <div class="amount num" style="color:var(--success)">${fmtMoney(sum)}</div></div>`;
     }).join("")}</div>` : "";
 
@@ -1969,15 +2468,23 @@ function pieceTable(empId, own){
     const list = byDate[date];
     const sum = list.reduce((s,x)=>s+x.qty*x.price,0);
     return `<div class="card" style="margin-bottom:10px">
-      <div style="display:flex;align-items:center;gap:9px;padding:11px 15px;border-bottom:1px solid var(--line)">
+      <div style="display:flex;align-items:center;gap:9px;padding:11px 15px;border-bottom:1px solid var(--line);flex-wrap:wrap">
         <b style="font-size:13.5px">${uzDate(date)}</b>
-        <span class="num" style="margin-left:auto;font-weight:800;color:var(--success)">${fmtMoney(sum)}</span></div>
+        ${list.some(x=>x.status==="pending") && canApprovePiece(empId) && !isArchive()
+          ? `<button class="btn success sm" onclick="decidePieceDay('${empId}','${date}','approved')">✓ Kunni tasdiqlash</button>` : ""}
+        <span class="num" style="margin-left:auto;font-weight:800;color:var(--success)">${fmtMoney(list.filter(x=>x.status==="approved").reduce((s,x)=>s+x.qty*x.price,0))}</span></div>
       ${list.map(x => { const j = PIECE_JOBS.find(y=>String(y.id)===String(x.job));
+        const st = x.status || "pending";
+        const stTag = st==="approved" ? '<span class="tag success">✓</span>' : st==="rejected" ? '<span class="tag danger">rad</span>' : '<span class="tag gold">kutmoqda</span>';
+        const appr = st==="pending" && canApprovePiece(x.emp) && !isArchive()
+          ? `<button class="btn success sm" onclick="decidePiece('${x.id}','approved')">✓</button>
+             <button class="btn ghost sm" onclick="decidePiece('${x.id}','rejected')">✗</button>` : "";
         return `<div class="fb-item">
           <div class="fb-icon" style="background:var(--accent-soft);color:var(--accent)">📦</div>
-          <div class="meta"><b>${j?esc(j.name):"—"}</b><span>${x.qty} ${j?esc(j.unit):"dona"} × ${fmtMoney(x.price)}</span></div>
-          <div class="amount num">${fmtMoney(x.qty*x.price)}</div>
-          ${(own || USER.role==="admin") ? `<button class="btn sm" style="color:var(--danger)" onclick="delPiece('${x.id}')">✕</button>` : ""}
+          <div class="meta"><b>${j?esc(j.name):"—"} ${stTag}</b><span>${x.qty} ${j?esc(j.unit):"dona"} × ${fmtMoney(x.price)}</span></div>
+          <div class="amount num" style="${st!=="approved"?"color:var(--muted)":""}">${fmtMoney(x.qty*x.price)}</div>
+          ${appr}
+          ${(own && st==="pending") || USER.role==="admin" ? `<button class="btn sm" style="color:var(--danger)" onclick="delPiece('${x.id}')">✕</button>` : ""}
         </div>`; }).join("")}
     </div>`;
   }).join("");
@@ -1994,7 +2501,7 @@ async function addPiece(){
   if (!jobId) return toast("Ish turini tanlang");
   if (qty <= 0) return toast("Sonini kiriting");
   const job = PIECE_JOBS.find(j => String(j.id) === String(jobId));
-  const rec = { emp: USER.id, date, job: +jobId, qty, price: job.price };
+  const rec = { emp: USER.id, date, job: +jobId, qty, price: job.price, status: "pending" };
   if (CLOUD) {
     const { data, error } = await sb.from("piece_entries")
       .insert({ emp: USER.id, date, job: +jobId, qty, price: job.price }).select().single();
@@ -2002,7 +2509,7 @@ async function addPiece(){
     rec.id = data.id;
   } else rec.id = Date.now();
   PIECE_ENTRIES.push(rec);
-  toast(`${esc(job.name)}: ${qty} ${job.unit} = ${fmtMoney(qty*job.price)} qo'shildi ✓`);
+  toast(`${esc(job.name)}: ${qty} ${job.unit} = ${fmtMoney(qty*job.price)} — boshliq tasdig'iga yuborildi`);
   render();
 }
 async function delPiece(id){
@@ -3740,7 +4247,8 @@ async function loadAll(){
   EMPLOYEES = (pr.data || []).map(p => ({ id: p.id, name: p.name, role: p.role, dept: p.dept,
     pos: p.pos, salary: +p.salary, color: p.color, login: toShort(p.email),
     contract: p.contract_until, fieldWork: !!p.field_work, canReassign: !!p.can_reassign,
-    photo: p.photo || null, piecework: !!p.piecework, ordersAccess: p.orders_access || "none" }));
+    photo: p.photo || null, piecework: !!p.piecework, ordersAccess: p.orders_access || "none",
+    stockAccess: p.stock_access || "none", snabRole: p.snab_role || "none" }));
   TASKS = (tk.data || []).map(t => {
     const nt = { id: t.id, title: t.title, desc: t.descr, emp: t.emp,
       emps: t.emps || null, by: t.created_by, due: t.due, status: t.status, doneAt: t.done_at,
@@ -3752,7 +4260,7 @@ async function loadAll(){
     if (p && Date.now() - p.at < 12000) { nt.status = p.status; if (p.status === "done") nt.doneAt = nt.doneAt || TODAY; }
     return nt;
   });
-  loadDocTypes(); loadLeaves(); loadPiece(); loadOrders();
+  loadDocTypes(); loadLeaves(); loadPiece(); loadOrders(); loadStock(); loadSnab();
   FINEBONUS = (fb.data || []).map(f => ({ id: f.id, emp: f.emp, type: f.type,
     amount: +f.amount, reason: f.reason, date: f.date }));
   ATTENDANCE = (at.data || []).map(a => ({ id: a.id, emp: a.emp, date: a.date,
@@ -3871,6 +4379,12 @@ function startClock(){
   };
   tick(); clockTimer = setInterval(tick, 1000);
 }
+
+/* POSTAVSHIK havolasi: ?sup=TOKEN — login talab qilinmaydi, faqat o'z kabineti */
+(function(){
+  const tok = new URLSearchParams(location.search).get("sup");
+  if (tok) { setTimeout(() => supplierPage(tok), 50); }
+})();
 
 /* PWA: service worker + o'rnatish tugmasi */
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
