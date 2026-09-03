@@ -41,13 +41,23 @@ async function askGemini(system, context, history, question){
   const body = {
     system_instruction: { parts: [{ text: system }] },
     contents,
-    generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+    generationConfig: { temperature: 0.3, maxOutputTokens: 8192, thinkingConfig: { thinkingBudget: 1024 } },
   };
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  let r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (r.status === 400) { // model thinkingConfig ni qo'llamasa — usiz qayta
+    delete body.generationConfig.thinkingConfig;
+    r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  }
   const j = await r.json();
   if (!r.ok) throw new Error(j.error?.message || ("Gemini xatosi " + r.status));
-  return (j.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("").trim() || "Javob olinmadi";
+  const cand = j.candidates?.[0];
+  // "thought" qismlarini tashlab, faqat javob matnini olamiz
+  let text = (cand?.content?.parts || []).filter(p => !p.thought).map(p => p.text || "").join("").trim();
+  if (!text) text = "Javob olinmadi";
+  if (cand?.finishReason === "MAX_TOKENS") text += "\n\n_(javob uzunligi chegarasiga yetdi — savolni qismlarga bo'lib bering)_";
+  if (cand?.finishReason === "SAFETY") text = "Javob xavfsizlik filtri tomonidan to'xtatildi — savolni boshqacha bering";
+  return text;
 }
 
 const SYSTEM = `Sen GM Pulse tizimining rahbar assistentisan. Foydalanuvchi — kompaniya rahbari.
