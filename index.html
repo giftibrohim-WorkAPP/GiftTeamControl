@@ -712,6 +712,46 @@ function permErr(sqlFile){
 function permErrMsg(msg, sqlFile){
   return USER && USER.role === "admin" ? `${msg} — ${sqlFile} ni Run qiling` : "Xatolik yuz berdi. Administratorga murojaat qiling.";
 }
+/* ===== BRAUZER BILDIRISHNOMASI + OVOZ =====
+   Ilova ochiq (yoki fonda) bo'lsa — telefon/kompyuter bildirishnomasi chiqadi va ovoz beradi. */
+function beep(){
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = "sine"; o.frequency.value = 880; g.gain.value = 0.15;
+    o.connect(g); g.connect(ctx.destination); o.start();
+    setTimeout(() => { o.frequency.value = 1175; }, 120);
+    setTimeout(() => { o.stop(); ctx.close(); }, 260);
+  } catch(e){}
+}
+async function notifyEnable(){
+  if (!("Notification" in window)) return toast("Bu brauzer bildirishnomani qo'llamaydi");
+  const p = await Notification.requestPermission();
+  if (p === "granted") { toast("Bildirishnomalar yoqildi 🔔"); beep(); notifyUser("GM Pulse", "Bildirishnomalar yoqildi ✓"); }
+  else toast("Ruxsat berilmadi — brauzer sozlamalaridan yoqing");
+}
+function notifyUser(title, body){
+  beep();
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+      navigator.serviceWorker.ready.then(reg => reg.showNotification(title, { body, icon: "icon-192.png", badge: "icon-192.png", vibrate: [150, 80, 150], tag: "gm-" + Date.now() }));
+    } else new Notification(title, { body, icon: "icon-192.png" });
+  } catch(e){}
+}
+/* Yangi bildirishnomalarni aniqlab, faqat YANGILARI uchun ovoz + bildirishnoma */
+let __seenNotif = null;
+function checkNewNotifs(){
+  if (!USER) return;
+  const items = notifList().map(n => n.text);
+  if (__seenNotif === null) { __seenNotif = new Set(items); return; } // birinchi yuklash — eskilarni belgilaymiz
+  const fresh = items.filter(t => !__seenNotif.has(t));
+  if (fresh.length) {
+    notifyUser("GM Pulse", fresh.length === 1 ? fresh[0] : `${fresh.length} ta yangi bildirishnoma: ${fresh[0]}`);
+    fresh.forEach(t => __seenNotif.add(t));
+  }
+}
+
 /* Rasm bilan avatar + tahrirlash tugmasi (kamera belgisi) */
 function photoEditHtml(e, cls="lg"){
   const canEdit = CLOUD && USER.role === "admin";   // rasmni faqat admin yuklaydi
@@ -1008,17 +1048,18 @@ function notifList(){
   const items = [], seen = new Set();
   const ids = scopeEmployees().map(e => String(e.id));
   // Vazifani BERGAN odamga (yoki admin) tasdiq so'rovi keladi
-  TASKS.filter(t => t.status==="review" && String(t.emp) !== String(USER.id)
+  TASKS.filter(t => t.status==="review" && !isTaskDoer(t, USER.id)
       && (String(t.by) === String(USER.id) || USER.role === "admin")).forEach(t => {
       seen.add(t.id);
       items.push({ ic:"✅", cls:"info", text:`«${t.title}» tasdiq kutmoqda — ${empById(t.emp)?.name.split(" ")[0]||""}`, go:"tasks" });
     });
-  TASKS.filter(t => t.emp === USER.id && t.status === "new").forEach(t => {
+  TASKS.filter(t => isTaskDoer(t, USER.id) && t.status === "new").forEach(t => {
     seen.add(t.id);
     items.push({ ic:"🆕", cls:"accent", text:`Yangi vazifa: «${t.title}» (muddat ${uzDate(t.due)})`, go:"tasks" });
   });
-  TASKS.filter(t => (String(t.emp)===String(USER.id) || ids.includes(String(t.emp))) && t.status!=="done" && t.due < TODAY && !seen.has(t.id))
-    .forEach(t => items.push({ ic:"⚠️", cls:"danger", text:`Muddati o'tdi: «${t.title}» — ${empById(t.emp).name.split(" ")[0]}`, go:"tasks" }));
+  TASKS.filter(t => (isTaskDoer(t, USER.id) || taskEmps(t).some(e => ids.includes(String(e))))
+      && t.status !== "done" && t.status !== "closed" && t.due < TODAY && !seen.has(t.id))
+    .forEach(t => items.push({ ic:"⚠️", cls:"danger", text:`Muddati o'tdi: «${t.title}» — ${taskEmps(t).map(e=>empById(e)?.name.split(" ")[0]||"").join(", ")}`, go:"tasks" }));
   ATTENDANCE.filter(a => a.ot === "pending" && canApproveOT(a) && ids.includes(String(a.emp))).forEach(a =>
     items.push({ ic:"⏱", cls:"gold", text:`${empById(a.emp).name.split(" ")[0]} — qo'shimcha ${otMinutes(a)} daqiqa tasdiq kutmoqda (${uzDate(a.date)})`, go:"attendance" }));
   LEAVE_REQS.filter(r => r.status === "pending" && canDecideLeave(r)).forEach(r =>
@@ -1029,7 +1070,7 @@ function notifList(){
       text:`${uzDate(r.date)} — ${leaveKindLabel(r.kind)} so'rovingiz ${r.status==="approved"?"tasdiqlandi":"rad etildi"}`, go:"me" }));
   if (canSeeSnab()) {
     const r = snabRole();
-    if (["admin","zavsklad"].includes(r)) SNAB_ITEMS.filter(i=>!i.received).forEach(i => { const o = SNAB_ORDERS.find(x=>String(x.id)===String(i.ord)); if (o && o.status!=="closed") items.push({ ic:"📦", cls:"gold", text:`${o.num}: ${i.name} — qabul qilishni kutmoqda`, go:"snab" }); });
+    if (["admin","zavsklad"].includes(r)) SNAB_ITEMS.filter(i=>!i.received).forEach(i => { const o = SNAB_ORDERS.find(x=>String(x.id)===String(i.ord)); if (o && snabStatus(o)!=="closed") items.push({ ic:"📦", cls:"gold", text:`${o.num}: ${i.name} — qabul qilishni kutmoqda`, go:"snab" }); });
     if (["admin","kassir"].includes(r)) SNAB_PAYS.filter(p=>p.status==="requested").forEach(p => { const o = SNAB_ORDERS.find(x=>String(x.id)===String(p.ord)); if (o) items.push({ ic:"💳", cls:"gold", text:`${o.num}: ${fmtMoney(p.amount)} to'lov so'raldi — ${p.purpose||""}`, go:"snab" }); });
     if (["admin","snab"].includes(r)) SNAB_PAYS.filter(p=>p.status==="paid").forEach(p => { const o = SNAB_ORDERS.find(x=>String(x.id)===String(p.ord)); if (o) items.push({ ic:"⏳", cls:"info", text:`${o.num}: ${fmtMoney(p.amount)} to'landi — postavshik tasdig'i kutilmoqda`, go:"snab" }); });
   }
@@ -1044,16 +1085,28 @@ function notifList(){
       items.push({ ic:"📄", cls:"gold", text: daysTo(e.contract) < 0
         ? `${e.name} — shartnoma muddati O'TGAN (${uzDate(e.contract)})`
         : `${e.name} — shartnoma tugashiga ${daysTo(e.contract)} kun`, go:"employees" }));
-  return items;
+  const dismissed = notifDismissed();
+  return items.filter(n => !dismissed.has(n.text));
+}
+function notifKey(){ return "gm_notif_dismissed_" + (USER ? USER.id : "x"); }
+function notifDismissed(){ try { return new Set(JSON.parse(localStorage.getItem(notifKey()) || "[]")); } catch(e){ return new Set(); } }
+/* Hozirgi bildirishnomalarni "o'qilgan" deb yashirish. Yangi hodisa bo'lsa yana chiqadi. */
+function notifClear(){
+  const cur = notifList().map(n => n.text);
+  const set = notifDismissed(); cur.forEach(t => set.add(t));
+  try { localStorage.setItem(notifKey(), JSON.stringify([...set].slice(-300))); } catch(e){}
+  toast("Bildirishnomalar tozalandi"); renderBell();
 }
 function renderBell(){
   const list = notifList();
   const badge = $("#bellBadge");
   badge.style.display = list.length ? "flex" : "none";
   badge.textContent = list.length;
-  $("#notifPanel").innerHTML = list.length
+  $("#notifPanel").innerHTML = (list.length
     ? list.map(n => `<button class="notif-item" onclick="toggleNotif();go('${n.go}')"><span>${n.ic}</span><span>${esc(n.text)}</span></button>`).join("")
-    : `<div class="empty" style="padding:18px">Yangi bildirishnoma yo'q</div>`;
+    : `<div class="empty" style="padding:18px">Yangi bildirishnoma yo'q</div>`)
+    + (list.length ? `<button class="notif-item" onclick="notifClear()" style="border-top:1px solid var(--line);color:var(--muted)"><span>🧹</span><span>Hammasini o'qilgan deb belgilash</span></button>` : "")
+    + `<button class="notif-item" onclick="toggleNotif();notifyEnable()" style="border-top:1px solid var(--line);color:var(--accent)"><span>🔔</span><span>${("Notification" in window && Notification.permission==="granted") ? "Telefon bildirishnomasi yoqilgan ✓" : "Telefon bildirishnomasini yoqish (ovoz bilan)"}</span></button>`;
 }
 function toggleNotif(){ $("#notifPanel").classList.toggle("open"); }
 document.addEventListener("click", e => {
@@ -1973,7 +2026,30 @@ function exportLedger(cid){
   ctLedger(cid).forEach(r => rows.push([r.date, r.ord, r.desc, r.goods||"", r.pay||"", r.bal]));
   downloadCSV("oldi-berdi_" + (c?c.name.replace(/\s+/g,"-"):cid), rows);
 }
-const SNAB_ST = { new:["gold","Yangi"], goods_ok:["info","Tovar qabul qilindi"], pay_requested:["gold","To'lov so'raldi"], paid:["info","To'landi — tasdiq kutilmoqda"], confirmed:["success","Yakunlandi ✓"], closed:["muted","Yopilgan"] };
+const SNAB_ST = {
+  new:        ["muted",   "Yangi — tovar kiritilmagan"],
+  goods_wait: ["gold",    "Tovar kutilmoqda"],
+  pay_wait:   ["gold",    "To'lov kutilmoqda (kassir)"],
+  sup_wait:   ["info",    "Postavshik tasdig'i kutilmoqda"],
+  both_wait:  ["gold",    "Tovar va to'lov kutilmoqda"],
+  done:       ["success", "Yakunlandi ✓"],
+  closed:     ["muted",   "Yopilgan"],
+};
+/* Zakazning HAQIQIY holati — tovar va to'lovlarning ahvolidan hisoblanadi */
+function snabStatus(o){
+  if (o.status === "closed") return "closed";
+  const items = SNAB_ITEMS.filter(i=>String(i.ord)===String(o.id));
+  const pays = SNAB_PAYS.filter(p=>String(p.ord)===String(o.id) && p.status!=="rejected");
+  if (!items.length && !pays.length) return "new";
+  const goodsWait = items.some(i => !i.received);
+  const kasWait = pays.some(p => p.status === "requested");
+  const supWait = pays.some(p => p.status === "paid");
+  if (goodsWait && (kasWait || supWait)) return "both_wait";
+  if (goodsWait) return "goods_wait";
+  if (kasWait) return "pay_wait";
+  if (supWait) return "sup_wait";
+  return "done";
+}
 function snabGo(page, id){ SNAB_VIEW = { page, contractor: page==="contractor"?id:SNAB_VIEW.contractor, order: page==="order"?id:null, tab: page==="contractor" ? (SNAB_VIEW.tab||"orders") : "orders" }; render(); }
 
 function pgSnab(){
@@ -2010,7 +2086,7 @@ function pgSnab(){
       <div style="flex:1;min-width:120px"><label>Telefon</label><input id="ctPhone" placeholder="+998"></div>
       <button class="btn primary" onclick="addContractor()">Qo'shish</button></div>` : ""}
     <div class="card">${CONTRACTORS.map(c => { const b = ctBalance(c.id); const n = SNAB_ORDERS.filter(o=>String(o.contractor)===String(c.id)).length;
-      const open = SNAB_ORDERS.filter(o=>String(o.contractor)===String(c.id) && !["confirmed","closed"].includes(o.status)).length;
+      const open = SNAB_ORDERS.filter(o=>String(o.contractor)===String(c.id) && !["done","closed"].includes(snabStatus(o))).length;
       return `<div class="fb-item" style="cursor:pointer" onclick="snabGo('contractor','${c.id}')">
         <div class="fb-icon" style="background:var(--accent-soft);color:var(--accent)">🏭</div>
         <div class="meta"><b>${esc(c.name)}</b><span>${n} zakaz${open?` · <span style="color:var(--gold)">${open} ochiq</span>`:""}${c.phone?" · "+esc(c.phone):""}</span></div>
@@ -2018,7 +2094,7 @@ function pgSnab(){
 }
 function snabOrderRow(o){
   const c = CONTRACTORS.find(x=>String(x.id)===String(o.id===o.id&&o.contractor));
-  const [cls,lbl] = SNAB_ST[o.status] || ["muted",o.status];
+  const [cls,lbl] = SNAB_ST[snabStatus(o)] || ["muted",""];
   const goods = SNAB_ITEMS.filter(i=>String(i.ord)===String(o.id)).reduce((s,i)=>s+i.qty*i.price,0);
   const pays = SNAB_PAYS.filter(p=>String(p.ord)===String(o.id) && p.status!=="rejected").reduce((s,p)=>s+p.amount,0);
   const unread = SNAB_MSGS.filter(m=>String(m.ord)===String(o.id)).length;
@@ -2058,7 +2134,7 @@ function snabContractorView(cid){
 function snabOrderView(oid){
   const o = SNAB_ORDERS.find(x=>String(x.id)===String(oid)); if (!o) return `<div class="card empty">Topilmadi</div>`;
   const c = CONTRACTORS.find(x=>String(x.id)===String(o.contractor));
-  const r = snabRole(); const [cls,lbl] = SNAB_ST[o.status] || ["muted",o.status];
+  const r = snabRole(); const [cls,lbl] = SNAB_ST[snabStatus(o)] || ["muted",""];
   const items = SNAB_ITEMS.filter(i=>String(i.ord)===String(o.id));
   const pays = SNAB_PAYS.filter(p=>String(p.ord)===String(o.id));
   const msgs = SNAB_MSGS.filter(m=>String(m.ord)===String(o.id) && (m.scope==="all" || (m.scope==="goods"&&seesGoods()) || (m.scope==="pay"&&seesPay())));
@@ -2110,9 +2186,9 @@ function snabOrderView(oid){
   // Zakaz cheki: tovar va to'lovlar bir ko'rinishda
   const receipt = `<div class="card" style="padding:12px 16px;margin-bottom:12px;background:var(--surface2)">
       <div style="display:flex;justify-content:space-between;font-size:12.5px;flex-wrap:wrap;gap:6px">
-        ${seesGoods() ? `<span>📦 Tovar: <b>${fmtMoney(goodsSum)}</b> (qabul: ${fmtMoney(recvSum)})</span>` : ""}
-        ${seesPay() ? `<span>💳 To'lov: <b>${fmtMoney(paySum)}</b> tasdiqlangan</span>` : ""}
-        ${seesGoods()&&seesPay() ? `<span>Zakaz bo'yicha: <b style="color:${paySum-recvSum>=0?"var(--success)":"var(--danger)"}">${paySum-recvSum>=0?"+":"−"}${fmtMoney(Math.abs(paySum-recvSum))}</b></span>` : ""}
+        ${seesGoods() ? `<span>📦 Tovar: <b>${fmtMoney(goodsSum)}</b> — qabul qilingan <b style="color:${recvSum<goodsSum?"var(--danger)":"var(--success)"}">${fmtMoney(recvSum)}</b>${recvSum<goodsSum?" ⚠️":""}</span>` : ""}
+        ${seesPay() ? `<span>💳 To'lov: <b>${fmtMoney(paySum)}</b> tasdiqlangan${pays.some(p=>["requested","paid"].includes(p.status))?" <span style='color:var(--gold)'>(kutilayotgan bor)</span>":""}</span>` : ""}
+        ${seesGoods()&&seesPay() ? `<span title="To'langan − qabul qilingan tovar">Hisob: <b style="color:${paySum-recvSum>0?"var(--success)":paySum-recvSum<0?"var(--danger)":""}">${paySum-recvSum>0?"+":paySum-recvSum<0?"−":""}${fmtMoney(Math.abs(paySum-recvSum))}</b> ${paySum-recvSum>0?"(oldindan to'langan)":paySum-recvSum<0?"(qarz)":""}</span>` : ""}
       </div></div>`;
   return `<div class="card" style="padding:12px 16px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <button class="btn ghost sm" onclick="snabGo('contractor','${o.contractor}')">←</button>
@@ -2208,7 +2284,10 @@ async function confirmSnabPayAdmin(id){
   render();
 }
 async function closeSnabOrder(id){
-  const o = SNAB_ORDERS.find(x=>String(x.id)===String(id)); if (!o || !confirm("Zakaz yopilsinmi?")) return;
+  const o = SNAB_ORDERS.find(x=>String(x.id)===String(id)); if (!o) return;
+  const st = snabStatus(o);
+  const warn = st !== "done" ? `\n\n⚠️ DIQQAT: ${SNAB_ST[st][1]}. Yopilsa ham qabul qilinmagan tovar va tasdiqlanmagan to'lov hisobga kirmaydi.` : "";
+  if (!confirm("Zakaz yopilsinmi?" + warn)) return;
   await setSnabStatus(o, "closed"); await snabMsg(o.id, "Zakaz yopildi", "sys", "all"); render();
 }
 async function sendSnabMsg(oid){
@@ -2227,9 +2306,19 @@ async function supplierPage(token){
   const bal = (+data.paid_total) - (+data.goods_total); // + = postavshik bizga qarz
   const st = SNAB_ST;
   root.className = "";
+  // Yangi xabar/to'lov bo'lsa ovoz + bildirishnoma
+  const sig = JSON.stringify((data.orders||[]).map(o => [o.id, o.status, o.msgs.length, o.payments.map(p=>p.status).join("")]));
+  if (window.__supSig && window.__supSig !== sig) notifyUser("GM Pulse — yangi o'zgarish", "Zakazingizda yangilik bor");
+  window.__supSig = sig;
+  if (!window.__supPoll) window.__supPoll = setInterval(() => supplierPage(token), 30000);
   root.innerHTML = `<div class="card" style="padding:16px;margin-bottom:12px">
-      <b style="font-family:'Sora';font-size:18px">🏭 ${esc(data.contractor.name)}</b>
-      <div style="color:var(--muted);font-size:12.5px;margin-top:3px">GM Pulse · postavshik kabineti</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div style="flex:1;min-width:150px"><b style="font-family:'Sora';font-size:18px">🏭 ${esc(data.contractor.name)}</b>
+          <div style="color:var(--muted);font-size:12.5px;margin-top:3px">GM Pulse · postavshik kabineti</div></div>
+        <button class="btn ghost sm" id="supInstallBtn" style="display:none" onclick="if(deferredPrompt){deferredPrompt.prompt()}">📲 O'rnatish</button>
+        <button class="btn ghost sm" onclick="notifyEnable()" title="Bildirishnoma">🔔</button>
+        <button class="btn ghost sm" onclick="supExit()" title="Chiqish">⏏</button></div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:8px">Bu sahifa telefoningizda eslab qolindi — keyingi safar havola kerak emas. Bosh ekranga qo'shib ilova kabi ishlating.</div>
       <div class="emp-mini" style="margin-top:12px">
         <div><b class="num">${fmtMoney(+data.goods_total)}</b><span>YETKAZILGAN TOVAR</span></div>
         <div><b class="num">${fmtMoney(+data.paid_total)}</b><span>OLINGAN TO'LOV</span></div>
@@ -4363,6 +4452,7 @@ function subscribeRealtime(){
     render();
     if (window.__taskOpen && document.getElementById("cmList")) loadComments(window.__taskOpen);
     AST_CACHE = {};
+    checkNewNotifs();
   };
   window.__rtRefresh = refresh;
   window.__rt = sb.channel("gm-live")
@@ -4387,7 +4477,7 @@ function enterApp(u){
   PAGE = (USER.role === "xodim") ? "me" : "dashboard";
   $("#login").style.display = "none";
   $("#app").style.display = "block";
-  render(); startClock(); subscribeRealtime();
+  render(); startClock(); subscribeRealtime(); __seenNotif = null; checkNewNotifs();
   toast(`Xush kelibsiz, ${USER.name.split(" ")[0]}!`);
 }
 
@@ -4431,11 +4521,19 @@ function startClock(){
   tick(); clockTimer = setInterval(tick, 1000);
 }
 
-/* POSTAVSHIK havolasi: ?sup=TOKEN — login talab qilinmaydi, faqat o'z kabineti */
+/* POSTAVSHIK: ?sup=TOKEN bir marta ochilsa — token telefonda eslab qolinadi.
+   Keyin ilova (bosh ekrandan) oddiy ochilganda ham to'g'ridan postavshik kabineti chiqadi. */
 (function(){
-  const tok = new URLSearchParams(location.search).get("sup");
-  if (tok) { setTimeout(() => supplierPage(tok), 50); }
+  let tok = new URLSearchParams(location.search).get("sup");
+  if (tok) { try { localStorage.setItem("gm_sup_token", tok); } catch(e){} history.replaceState(null, "", location.pathname); }
+  else { try { tok = localStorage.getItem("gm_sup_token"); } catch(e){} }
+  if (tok) { window.__supMode = true; setTimeout(() => supplierPage(tok), 50); }
 })();
+function supExit(){
+  if (!confirm("Postavshik kabinetidan chiqilsinmi? Qayta kirish uchun havola kerak bo'ladi.")) return;
+  try { localStorage.removeItem("gm_sup_token"); } catch(e){}
+  location.href = location.pathname;
+}
 
 /* PWA: service worker + o'rnatish tugmasi */
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
@@ -4443,7 +4541,8 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
 }
 window.addEventListener("beforeinstallprompt", e => {
   e.preventDefault(); deferredPrompt = e;
-  $("#installBtn").style.display = "flex";
+  const b = $("#installBtn"); if (b) b.style.display = "flex";
+  const sb2 = document.getElementById("supInstallBtn"); if (sb2) sb2.style.display = "inline-flex";
 });
 $("#installBtn").addEventListener("click", async () => {
   if (!deferredPrompt) return;
