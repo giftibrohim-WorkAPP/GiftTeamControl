@@ -690,8 +690,10 @@ function contractTag(iso, short=false){
   return `<span class="tag ${s.cls}" title="Shartnoma: ${uzDate(iso)}">📄 ${short ? s.label : s.txt}</span>`;
 }
 /* "Ketdim" unutilgan o'tgan kunlarni 18:00 bilan avto-yopish */
+/* "Ketdim" bosilmagan kun 18:00 bilan AVTOMATIK YOPILMAYDI — xodim bosmasa yoki
+   admin qo'lda tuzatmasa, o'sha kun uchun soat/pul hisoblanmaydi. */
 function normalizeAttendance(){
-  ATTENDANCE.forEach(a => { if (!a.out && a.date < TODAY) { a.out = "18:00"; a.auto = true; } });
+  ATTENDANCE.forEach(a => { if (!a.out && a.date < TODAY) a.unclosed = true; });
 }
 
 function toast(msg){
@@ -1065,6 +1067,10 @@ function notifList(){
     .forEach(t => items.push({ ic:"⚠️", cls:"danger", text:`Muddati o'tdi: «${t.title}» — ${taskEmps(t).map(e=>empById(e)?.name.split(" ")[0]||"").join(", ")}`, go:"tasks" }));
   ATTENDANCE.filter(a => a.ot === "pending" && canApproveOT(a) && ids.includes(String(a.emp))).forEach(a =>
     items.push({ ic:"⏱", cls:"gold", text:`${empById(a.emp).name.split(" ")[0]} — qo'shimcha ${otMinutes(a)} daqiqa tasdiq kutmoqda (${uzDate(a.date)})`, go:"attendance" }));
+  ATTENDANCE.filter(a => String(a.emp)===String(USER.id) && !a.out && a.date < TODAY).slice(-3).forEach(a =>
+    items.push({ ic:"⚠️", cls:"danger", text:`${uzDate(a.date)} — "Ketdim" bosilmagan, bu kun soati hisoblanmadi. Adminga ayting`, go:"me" }));
+  if (USER.role === "admin") ATTENDANCE.filter(a => !a.out && a.date < TODAY).forEach(a =>
+    items.push({ ic:"⚠️", cls:"gold", text:`${empById(a.emp)?.name.split(" ")[0]} — ${uzDate(a.date)} ketish vaqti yo'q (tuzatish kerak)`, go:"attendance" }));
   LEAVE_REQS.filter(r => r.status === "pending" && canDecideLeave(r)).forEach(r =>
     items.push({ ic:"📝", cls:"gold",
       text:`${empById(r.emp)?.name.split(" ")[0]} — ${leaveKindLabel(r.kind)}ga ruxsat so'radi (${uzDate(r.date)}${r.fromTime?" "+r.fromTime:""})`, go:"attendance" }));
@@ -1297,7 +1303,7 @@ function pgProfile(){
           <tr><th>Sana</th><th>Kelgan</th><th>Ketgan</th><th>Soat</th></tr>
           ${att.map(a=>`<tr><td>${uzDate(a.date)}</td>
             <td class="num">${a.in} ${a.late?'<span class="tag danger">kech</span>':""}</td>
-            <td class="num">${a.out ?? "—"} ${a.auto?'<span class="tag gold">avto</span>':""}</td>
+            <td class="num">${a.out ?? (a.date===TODAY ? "—" : '<span class="tag danger" title="Ketdim bosilmagan — soat hisoblanmaydi">yo\'q ⚠️</span>')}</td>
             <td class="num">${a.out ? workedHours(a).toFixed(1) : "—"}</td></tr>`).join("") || "<tr><td colspan='4' class='empty'>Yo'q</td></tr>"}
         </table></div></div>
     </div>
@@ -2004,8 +2010,17 @@ function salesBar(k){
   return `<div style="position:relative;height:14px;background:var(--surface2);border-radius:99px;margin:14px 0 26px">
     <div style="height:100%;width:${pct}%;border-radius:99px;background:linear-gradient(90deg,var(--accent),${k.gift?"var(--gold)":"var(--success)"});transition:width .4s"></div>${marks}</div>`;
 }
+function canSeeKpi(){ return USER.role === "admin" || isExec(USER.role); }
 function salesCard(e, k, big){
   const giftTier = SALES_TIERS.find(t=>t.gift);
+  const mine = String(e.id) === String(USER.id);
+  // Kassir: faqat sotuv summasi va soni — KPI/foiz/bosqich ko'rinmaydi
+  if (!mine && !canSeeKpi()) return `<div class="card" style="padding:14px 16px;margin-bottom:10px">
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">${avatarHtml(e,"sm")}
+      <div style="flex:1;min-width:140px"><b style="font-size:14px">${esc(e.name)}</b><br>
+        <span style="font-size:12px;color:var(--muted)">${SALES_ENTRIES.filter(x=>String(x.manager)===String(e.id)).length} ta sotuv · ${monthLabelLow()}</span></div>
+      <div style="text-align:right"><div class="num" style="font-size:18px;font-weight:900">${fmtMoney(k.total)}</div>
+        <div style="font-size:10.5px;color:var(--muted);font-weight:700">JAMI SOTUV</div></div></div></div>`;
   return `<div class="card" style="padding:16px;margin-bottom:12px;${k.gift?"border:2px solid var(--gold)":""}">
     <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
       ${avatarHtml(e, big?"lg":"sm")}
@@ -2152,7 +2167,9 @@ function pgDesign(){
         <div class="meta"><b>${esc(e.name)} ${pend?`<span class="tag gold">${pend} ta tasdiq kutmoqda</span>`:""}</b>
           <span>${DESIGN_BRANDS.map(b=>`${esc(b.name)}: ${(designByBrand(e.id)[b.id]||{n:0}).n}`).join(" · ")}</span></div>
         <div class="amount num" style="color:var(--success)">${fmtMoney(designTotal(e.id))}</div></div>`; }).join("")}</div>` : "";
-  return adminBar + myBlock + mgmt;
+  const emptyHint = !me && canSeeAll && !designers.length
+    ? `<div class="card empty">Dizayner topilmadi. Admin "Donabay → Kim donabay ishlaydi"da xodimni "Dizayner" deb belgilashi kerak${USER.snabRole==="kassir"&&USER.role!=="admin"?" (va supabase-update-22.sql Run qilingan bo'lishi kerak)":""}</div>` : "";
+  return adminBar + myBlock + mgmt + emptyHint;
 }
 function designTable(empId, own){
   const rows = DESIGN_ENTRIES.filter(x => String(x.emp)===String(empId)).sort((a,b)=>b.date.localeCompare(a.date));
@@ -3280,7 +3297,7 @@ function personalBlock(e){
             }
             return `<tr><td>${uzDate(a.date)}</td>
             <td class="num">${a.in} ${a.geo?`<a href="https://maps.google.com/?q=${a.geo}" target="_blank" rel="noopener" style="text-decoration:none">📍</a>`:""} ${lateTag}</td>
-            <td class="num">${a.out ?? "—"} ${a.auto?'<span class="tag gold">avto</span>':""}</td>
+            <td class="num">${a.out ?? (a.date===TODAY ? "—" : '<span class="tag danger" title="Ketdim bosilmagan — soat hisoblanmaydi">yo\'q ⚠️</span>')}</td>
             <td class="num">${a.out ? workedHours(a).toFixed(1) : "—"}</td></tr>`;}).join("")}
         </table></div>
       </div>
@@ -3868,8 +3885,7 @@ function pgAttendance(){
             ? `<button class="btn ghost sm" title="Jarimani tahrirlash" onclick="openFineEdit('${a.emp}','${a.date}')">💰</button>` : ""}</div>
         <div><span class="sub2">KETDI</span><b class="num">${a.out ?? "—"}</b>
           ${a.outGeo?`<a href="https://maps.google.com/?q=${a.outGeo}" target="_blank" rel="noopener" style="text-decoration:none" title="Ishni tugatgan joy">📍</a>`:""}
-          ${!a.out?'<span class="tag gold">ishda</span>':""}
-          ${a.auto?'<span class="tag gold" title="18:00 bilan avto yopilgan">avto</span>':""}
+          ${!a.out ? (a.date === TODAY ? '<span class="tag gold">ishda</span>' : '<span class="tag danger" title="Ketdim bosilmagan — bu kun uchun soat/pul hisoblanmaydi. Admin tuzatishi mumkin">ketdim bosilmagan ⚠️</span>') : ""}
           ${(() => { const llm = a.lunchBack ? Math.max(0, minutes(a.lunchBack) - minutes(LUNCH_END)) : 0;
             if (!llm) return "";
             if (a.lunchExcused) return `<span class="tag info">obed +${llm} daq · sababli ✓</span>`;
@@ -3988,7 +4004,9 @@ function openAttModal(emp, date){
     ${fixed ? "" : `<label>Xodim</label><select id="atEmp">${scopeEmployees().map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join("")}</select>
     <label>Sana</label><input id="atDate" type="date" value="${TODAY}" max="${TODAY}">`}
     <label>Kelgan vaqt</label><input id="atIn" type="time" value="${a ? a.in : "09:00"}">
-    <label>Ketgan vaqt (bo'sh = hali ishda)</label><input id="atOut" type="time" value="${a && a.out ? a.out : ""}">
+    <label>Ketgan vaqt (bo'sh = ketish yo'q, soat hisoblanmaydi)</label><input id="atOut" type="time" value="${a && a.out ? a.out : ""}">
+    <label>Obeddan qaytgan vaqt (bo'sh = standart 1 soat)</label><input id="atLunch" type="time" value="${a && a.lunchBack ? a.lunchBack : ""}">
+    <div style="font-size:11.5px;color:var(--muted);margin-top:4px">14:00 dan kech bo'lsa ortiqcha daqiqalar ish vaqtidan ayriladi. Kechirish uchun 14:00 yoki bo'sh qoldiring.</div>
     <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor qilish</button>
     <button class="btn primary" onclick="saveAtt('${emp||""}','${date||""}')">Saqlash</button></div>`);
 }
@@ -3996,22 +4014,25 @@ async function saveAtt(emp, date){
   if (!emp) { emp = $("#atEmp").value; date = $("#atDate").value; }
   if (!date) return toast("Sanani tanlang");
   const tin = $("#atIn").value, tout = $("#atOut").value || null;
+  const tlunch = $("#atLunch") ? ($("#atLunch").value || null) : null;
+  const lunchLate = !!(tlunch && minutes(tlunch) > minutes(LUNCH_END));
   if (!tin) return toast("Kelgan vaqtni kiriting");
   const late = minutes(tin) > minutes(WORK_START);
   const eo = empById(emp);
   let a = ATTENDANCE.find(x => String(x.emp)===String(emp) && x.date===date);
   if (CLOUD) {
     if (a && a.id) {
-      const { error } = await sb.from("attendance").update({ check_in: tin, check_out: tout, late }).eq("id", a.id);
+      const { error } = await sb.from("attendance").update({ check_in: tin, check_out: tout, late, lunch_back: tlunch, lunch_late: lunchLate }).eq("id", a.id);
       if (error) return toast("Xatolik: " + error.message);
     } else {
       const { data, error } = await sb.from("attendance")
-        .insert({ emp: eo.id, date, check_in: tin, check_out: tout, late }).select().single();
+        .insert({ emp: eo.id, date, check_in: tin, check_out: tout, late, lunch_back: tlunch, lunch_late: lunchLate }).select().single();
       if (error) return toast("Xatolik: " + error.message);
       a = { id: data.id, emp: eo.id, date }; ATTENDANCE.push(a);
     }
   } else if (!a) { a = { emp: eo.id, date }; ATTENDANCE.push(a); }
-  a.in = tin; a.out = tout; a.late = late; a.auto = false;
+  a.in = tin; a.out = tout; a.late = late; a.auto = false; a.unclosed = !tout && date < TODAY;
+  a.lunchBack = tlunch; a.lunchLate = lunchLate;
   // Admin qo'lda kiritdi — demak vaqt kelishilgan: qo'shimcha vaqt bo'lsa avtomatik tasdiqlanadi
   a.ot = (tout && otMinutes(a) > 0) ? "approved" : "none";
   if (CLOUD && a.id) await sb.from("attendance").update({ ot_status: a.ot }).eq("id", a.id);
@@ -4683,6 +4704,16 @@ async function loadAll(){
     if (p && Date.now() - p.at < 12000) { nt.status = p.status; if (p.status === "done") nt.doneAt = nt.doneAt || TODAY; }
     return nt;
   });
+  // Kassir: dizayner va sotuv menejerlarini (boshqa bo'limdan bo'lsa ham) ko'rishi kerak — maoshsiz
+  let myId = USER ? USER.id : null;
+  if (!myId) { try { const { data: ses } = await sb.auth.getSession(); myId = ses?.session?.user?.id || null; } catch(e){} }
+  const meRow = EMPLOYEES.find(e => String(e.id) === String(myId));
+  if (meRow && meRow.snabRole === "kassir" && meRow.role !== "admin") {
+    const { data: kp } = await sb.rpc("kassir_people");
+    (kp || []).forEach(p => { if (!EMPLOYEES.some(e => String(e.id) === String(p.id)))
+      EMPLOYEES.push({ id:p.id, name:p.name, pos:p.pos, dept:p.dept, color:p.color, photo:p.photo, role:"xodim", salary:0,
+        piecework:!!p.piecework, pieceKind:p.piece_kind||"work", salesManager:!!p.sales_manager, _light:true }); });
+  }
   loadDocTypes(); loadLeaves(); loadPiece(); loadOrders(); loadStock(); loadSnab(); loadDesign(); loadSales();
   FINEBONUS = (fb.data || []).map(f => ({ id: f.id, emp: f.emp, type: f.type,
     amount: +f.amount, reason: f.reason, date: f.date }));
