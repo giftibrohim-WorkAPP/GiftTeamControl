@@ -887,7 +887,9 @@ function earnedToDate(e){
   const base = hourRate * hours;
   const planSoFar = days * PLAN_HOURS;
   const diff = hours - planSoFar;
-  const piece = (typeof pieceTotal === "function") ? pieceTotal(e.id) : 0; // donabay ish haqi
+  const piece = ((typeof pieceTotal === "function") ? pieceTotal(e.id) : 0)
+              + ((typeof designTotal === "function") ? designTotal(e.id) : 0)
+              + ((typeof salesKpi === "function") ? salesKpi(e.id).kpi : 0); // donabay + dizayn + sotuv KPI
   const manualFine = sumFB(e.id,"fine");
   const fine = manualFine + lateFineSum;   // jami jarima (ALOHIDA hisob)
   const bonus = sumFB(e.id,"bonus");
@@ -1036,6 +1038,7 @@ const IC = {
   moon:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20.5 14.5A8.5 8.5 0 019.5 3.5a8.5 8.5 0 1011 11z"/></svg>`,
   out:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 4h3.5A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5H15M10 8l-4 4 4 4M6 12h10"/></svg>`,
   calc:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8.5 7h7M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 16h.01"/></svg>`,
+  brush: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 114.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 00-3-3.02z"/></svg>`,
   truck: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>`,
   bot:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="12" rx="3"/><path d="M12 8V4M8 4h8M8 14h.01M16 14h.01M9 17h6"/></svg>`,
   cart:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 002 1.6h9.7a2 2 0 002-1.6L23 6H6"/></svg>`,
@@ -1155,9 +1158,11 @@ function navItems(){
   if (canSeeOrders()) n.push({ id:"orders", label:"Zakazlar", icon:IC.cart });
   if (stockAccess() !== "none") n.push({ id:"stock", label:"Sklad", icon:IC.box });
   if (canSeeSnab()) n.push({ id:"snab", label:"Snabjeniya", icon:IC.truck });
+  if (isDesigner(USER) || USER.role === "admin" || isExec(USER.role) || USER.snabRole === "kassir") n.push({ id:"design", label:"Dizayn", icon:IC.brush });
+  if (USER.salesManager || USER.role === "admin" || isExec(USER.role) || USER.snabRole === "kassir") n.push({ id:"sales", label:"Sotuv KPI", icon:IC.up });
   if (isExec(USER.role) || USER.role === "admin") n.push({ id:"assistant", label:"Assistent", icon:IC.bot });
   // Donabay ish — o'zi donabay bo'lsa yoki boshqaruvchi bo'lsa
-  if (USER.piecework || USER.role === "admin" || isExec(USER.role) ||
+  if ((USER.piecework && USER.pieceKind !== "design") || USER.role === "admin" || isExec(USER.role) ||
       (USER.role === "boshliq" && pieceEmployees().some(e => String(e.dept) === String(USER.dept))))
     n.push({ id:"piece", label:"Donabay ish", icon:IC.box });
   n.push({ id:"finebonus", label:"Jarima / Bonus", icon:IC.money });
@@ -1212,6 +1217,8 @@ const TITLES = {
   orders:     ["Zakazlar", "Mijozlardan tushgan buyurtmalar va savdo"],
   stock:      ["Sklad", "Tovar kirimi, otgruzka va qoldiq"],
   snab:       ["Snabjeniya", "Kontragentlar, zakazlar, to'lovlar va balans"],
+  design:     ["Dizayn hisobi", "Brend bo'yicha dizayn haqi — kassir tasdiqlaydi"],
+  sales:      ["Sotuv KPI", "Oylik sotuv summasiga qarab bosqichli foiz"],
   assistant:  ["Assistent", "Ma'lumotlardan aniq hisoblab javob beradi"],
 };
 let PROFILE_ID = null;
@@ -1224,7 +1231,7 @@ function render(){
   $("#pageSub").textContent = s;
   const fn = { dashboard: pgDashboard, me: pgMe, employees: pgEmployees,
                tasks: pgTasks, attendance: pgAttendance, finebonus: pgFineBonus,
-               payroll: pgPayroll, profile: pgProfile, rating: pgRating, piece: pgPiece, orders: pgOrders, assistant: pgAssistant, stock: pgStock, snab: pgSnab }[PAGE];
+               payroll: pgPayroll, profile: pgProfile, rating: pgRating, piece: pgPiece, orders: pgOrders, assistant: pgAssistant, stock: pgStock, snab: pgSnab, design: pgDesign, sales: pgSales }[PAGE];
   $("#page").innerHTML = fn();
   renderBell();
   saveState();
@@ -1949,6 +1956,264 @@ async function delProduct(id){
   PRODUCTS = PRODUCTS.filter(p => String(p.id) !== String(id));
   toast("O'chirildi"); openProducts();
 }
+
+/* ================= SOTUV MENEJERI KPI (bosqichli foiz) ================= */
+let SALES_ENTRIES = [], SALES_TIERS = [
+  { id:1, from:0,   to:100,  pct:0,   gift:false },
+  { id:2, from:100, to:150,  pct:1.0, gift:false },
+  { id:3, from:150, to:300,  pct:1.7, gift:false },
+  { id:4, from:300, to:500,  pct:2.1, gift:false },
+  { id:5, from:500, to:750,  pct:2.4, gift:false },
+  { id:6, from:750, to:null, pct:2.4, gift:true  },
+];
+const MLN = 1e6;
+async function loadSales(){
+  if (!CLOUD) return;
+  const [se, st] = await Promise.all([
+    sb.from("sales_entries").select("*").gte("date", viewMonthStart()).lte("date", viewMonthEnd()).order("date", { ascending:false }),
+    sb.from("sales_tiers").select("*").order("sort"),
+  ]);
+  if (se.data) SALES_ENTRIES = se.data.map(x => ({ id:x.id, manager:x.manager, date:x.date, brand:x.brand, product:x.product, code:x.code, orderNum:x.order_num, price:x.price!=null?+x.price:null, amount:+x.amount, note:x.note, by:x.created_by }));
+  if (st.data && st.data.length) SALES_TIERS = st.data.map(t => ({ id:t.id, from:+t.from_mln, to:t.to_mln!=null?+t.to_mln:null, pct:+t.pct, gift:t.gift }));
+}
+function salesTotal(mgr){ return SALES_ENTRIES.filter(x => String(x.manager)===String(mgr)).reduce((s,x)=>s+x.amount,0); }
+/* BOSQICHLI KPI: har oraliqdagi QISM o'z foizida. Masalan 200 mln: (150-100)×1% + (200-150)×1.7% */
+function salesKpi(mgr){
+  const total = salesTotal(mgr);
+  let kpi = 0; const parts = [];
+  for (const t of SALES_TIERS) {
+    const lo = t.from*MLN, hi = t.to==null ? Infinity : t.to*MLN;
+    const part = Math.max(0, Math.min(total, hi) - lo);
+    if (part > 0 && t.pct > 0) { const v = part * t.pct / 100; kpi += v; parts.push({ tier:t, part, v }); }
+  }
+  const cur = SALES_TIERS.slice().reverse().find(t => total >= t.from*MLN) || SALES_TIERS[0];
+  const next = SALES_TIERS.find(t => t.from*MLN > total);
+  const giftTier = SALES_TIERS.find(t => t.gift);
+  const gift = giftTier && total >= giftTier.from*MLN;
+  const toGift = giftTier ? Math.max(0, giftTier.from*MLN - total) : 0;
+  return { total, kpi: Math.round(kpi), parts, cur, next, gift, toGift, toNext: next ? next.from*MLN - total : 0 };
+}
+function salesManagers(){ return EMPLOYEES.filter(e => e.salesManager); }
+function tierLabel(t){ return t.to==null ? `${t.from} mln+` : `${t.from}–${t.to} mln`; }
+/* Vizual: bosqichli shkala */
+function salesBar(k){
+  const maxMln = (SALES_TIERS.find(t=>t.gift)?.from || 750) * 1.15;
+  const pct = Math.min(100, k.total / (maxMln*MLN) * 100);
+  const marks = SALES_TIERS.filter(t=>t.from>0).map(t => `<div style="position:absolute;left:${Math.min(100,t.from/maxMln*100)}%;top:-4px;bottom:-4px;width:2px;background:${t.gift?"var(--gold)":"var(--line)"}" title="${tierLabel(t)} · ${t.pct}%"></div>
+    <div style="position:absolute;left:${Math.min(100,t.from/maxMln*100)}%;top:22px;transform:translateX(-50%);font-size:10px;color:${t.gift?"var(--gold)":"var(--muted)"};white-space:nowrap">${t.gift?"🎁 ":""}${t.from}</div>`).join("");
+  return `<div style="position:relative;height:14px;background:var(--surface2);border-radius:99px;margin:14px 0 26px">
+    <div style="height:100%;width:${pct}%;border-radius:99px;background:linear-gradient(90deg,var(--accent),${k.gift?"var(--gold)":"var(--success)"});transition:width .4s"></div>${marks}</div>`;
+}
+function salesCard(e, k, big){
+  const giftTier = SALES_TIERS.find(t=>t.gift);
+  return `<div class="card" style="padding:16px;margin-bottom:12px;${k.gift?"border:2px solid var(--gold)":""}">
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      ${avatarHtml(e, big?"lg":"sm")}
+      <div style="flex:1;min-width:140px"><b style="font-family:'Sora';font-size:${big?17:14}px">${esc(e.name)}</b><br>
+        <span style="font-size:12px;color:var(--muted)">${esc(e.pos)} · ${SALES_ENTRIES.filter(x=>String(x.manager)===String(e.id)).length} ta sotuv</span></div>
+      <div style="text-align:right">
+        <div class="num" style="font-size:${big?22:18}px;font-weight:900">${fmtMoney(k.total)}</div>
+        <div style="font-size:10.5px;color:var(--muted);font-weight:700">JAMI SOTUV</div></div></div>
+    ${salesBar(k)}
+    <div class="emp-mini" style="grid-template-columns:1fr 1fr 1fr">
+      <div><b class="num" style="color:var(--success)">${fmtMoney(k.kpi)}</b><span>KPI (SO'M)</span></div>
+      <div><b class="num">${k.cur.pct}%</b><span>JORIY BOSQICH · ${tierLabel(k.cur)}</span></div>
+      <div><b class="num" style="color:${k.gift?"var(--gold)":""}">${k.gift ? "🎁 SOVG'A!" : fmtMoney(k.toGift)}</b><span>${k.gift ? "750 MLN O'TILDI" : "SOVG'AGACHA QOLDI"}</span></div></div>
+    ${k.next && !k.gift ? `<div style="font-size:12px;color:var(--muted);margin-top:8px">Keyingi bosqich (${tierLabel(k.next)} · ${k.next.pct}%) gacha <b>${fmtMoney(k.toNext)}</b> qoldi</div>` : ""}
+    ${big && k.parts.length ? `<div style="margin-top:10px;font-size:12px;border-top:1px solid var(--line);padding-top:8px">
+      ${k.parts.map(p=>`<div style="display:flex;justify-content:space-between"><span>${tierLabel(p.tier)} oralig'i: ${fmtMoney(p.part)} × ${p.tier.pct}%</span><b>${fmtMoney(Math.round(p.v))}</b></div>`).join("")}
+      <div style="display:flex;justify-content:space-between;font-weight:800;margin-top:4px"><span>Jami KPI</span><span style="color:var(--success)">${fmtMoney(k.kpi)}</span></div></div>` : ""}
+  </div>`;
+}
+function pgSales(){
+  const me = USER.salesManager, kas = isKassir();
+  if (!me && !kas) return `<div class="card empty">Bu bo'lim sotuv menejerlari, kassir va rahbariyat uchun</div>`;
+  const adminBar = USER.role==="admin" ? `<div class="filters"><button class="btn ghost sm" onclick="openSalesManagers()">👥 Sotuv menejerlari</button><button class="btn ghost sm" onclick="openSalesTiers()">📊 KPI bosqichlari</button></div>` : "";
+  const myBlock = me ? salesCard(USER, salesKpi(USER.id), true) + `<h3 class="section-title">Mening sotuvlarim</h3>${salesTable(USER.id)}` : "";
+  const mgrs = salesManagers().filter(e => String(e.id)!==String(USER.id));
+  const canEdit = (USER.role==="admin" || USER.snabRole==="kassir") && !isArchive();
+  const form = canEdit && mgrs.length ? `<div class="card" style="padding:16px;margin-bottom:14px">
+      <b style="font-size:14px">➕ Sotuv yozish (kassir)</b>
+      <div class="ord-form" style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;margin-top:10px">
+        <div><label>Menejer</label><select id="slMgr">${mgrs.map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join("")}</select></div>
+        <div><label>Brend</label><input id="slBrand" list="slBrands" placeholder="Karona / Gift Master"><datalist id="slBrands">${[...new Set(SALES_ENTRIES.map(x=>x.brand).filter(Boolean))].map(b=>`<option value="${esc(b)}">`).join("")}</datalist></div>
+        <div><label>Zakaz raqami</label><input id="slOrder" placeholder="№"></div>
+        <div><label>Tovar nomi</label><input id="slProd" placeholder="Tovar"></div>
+        <div><label>Kodi</label><input id="slCode" placeholder="Kod"></div>
+        <div><label>Narxi (ixtiyoriy)</label><input id="slPrice" type="number" min="0"></div>
+        <div><label>Summa (so'm) *</label><input id="slAmt" type="number" min="0" step="1000" placeholder="0"></div>
+        <div><label>Sana</label><input id="slDate" type="date" value="${TODAY}" max="${TODAY}"></div>
+        <div style="display:flex;align-items:flex-end"><button class="btn primary" style="width:100%" onclick="addSale()">Qo'shish</button></div>
+      </div></div>` : (canEdit ? `<div class="card empty">Sotuv menejeri belgilanmagan — admin "👥 Sotuv menejerlari"dan belgilasin</div>` : "");
+  const list = kas && mgrs.length ? `<h3 class="section-title" style="margin-top:6px">Menejerlar (${monthLabelLow()})</h3>` +
+    mgrs.map(e => ({ e, k: salesKpi(e.id) })).sort((a,b)=>b.k.total-a.k.total).map(({e,k}) => `<div onclick="openSalesEmp('${e.id}')" style="cursor:pointer">${salesCard(e,k,false)}</div>`).join("") : "";
+  return adminBar + myBlock + form + list;
+}
+function salesTable(mgr){
+  const rows = SALES_ENTRIES.filter(x=>String(x.manager)===String(mgr)).sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);
+  if (!rows.length) return `<div class="card empty">Sotuv yo'q</div>`;
+  const canDel = (USER.role==="admin" || USER.snabRole==="kassir") && !isArchive();
+  return `<div class="card">${rows.map(x=>`<div class="fb-item"><div class="fb-icon" style="background:var(--accent-soft);color:var(--accent)">🛍</div>
+    <div class="meta"><b>${esc(x.product||"—")} ${x.brand?`<span class="tag info">${esc(x.brand)}</span>`:""}</b>
+      <span>${uzDate(x.date)}${x.orderNum?" · №"+esc(x.orderNum):""}${x.code?" · kod "+esc(x.code):""}${x.price?" · "+fmtMoney(x.price):""}${x.by?" · "+(empById(x.by)?.name.split(" ")[0]||""):""}</span></div>
+    <div class="amount num" style="color:var(--success)">${fmtMoney(x.amount)}</div>
+    ${canDel?`<button class="btn sm" style="color:var(--danger)" onclick="delSale('${x.id}')">✕</button>`:""}</div>`).join("")}</div>`;
+}
+function openSalesEmp(id){ const e = empById(id); if (!e) return;
+  openModal(`<h3>${esc(e.name)} — sotuvlar</h3>${salesCard(e, salesKpi(id), true)}<div style="max-height:45vh;overflow-y:auto">${salesTable(id)}</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`); }
+async function addSale(){
+  const manager = $("#slMgr").value, amount = +$("#slAmt").value||0, date = $("#slDate").value;
+  if (!manager) return toast("Menejerni tanlang"); if (amount<=0) return toast("Summani kiriting");
+  const rec = { manager: CLOUD?manager:+manager, date, brand:$("#slBrand").value.trim()||null, product:$("#slProd").value.trim()||null, code:$("#slCode").value.trim()||null,
+    orderNum:$("#slOrder").value.trim()||null, price:+$("#slPrice").value||null, amount, by:USER.id };
+  if (CLOUD) { const { data, error } = await sb.from("sales_entries").insert({ manager, date, brand:rec.brand, product:rec.product, code:rec.code, order_num:rec.orderNum, price:rec.price, amount, created_by:USER.id }).select().single();
+    if (error) return toast("Xatolik: "+error.message); rec.id = data.id; } else rec.id = Date.now();
+  SALES_ENTRIES.push(rec);
+  ["slProd","slCode","slOrder","slPrice","slAmt"].forEach(i=>{ const el=$("#"+i); if (el) el.value=""; });
+  toast(`Sotuv yozildi: ${fmtMoney(amount)} ✓`); render();
+}
+async function delSale(id){ if (!confirm("Sotuv yozuvi o'chirilsinmi?")) return;
+  if (CLOUD) { const { error } = await sb.from("sales_entries").delete().eq("id", id); if (error) return toast("Xatolik: "+error.message); }
+  SALES_ENTRIES = SALES_ENTRIES.filter(x=>String(x.id)!==String(id)); closeModal(); render(); }
+function openSalesManagers(){
+  const list = EMPLOYEES.filter(e=>e.role!=="admin");
+  openModal(`<h3>👥 Sotuv menejerlari</h3><div class="sub">Belgilanganlar uchun sotuv KPI hisoblanadi</div>
+    <div class="emp-pick" style="margin-top:11px;max-height:50vh">${list.map(e=>`<label class="pick-chip"><input type="checkbox" class="smChk" value="${e.id}" ${e.salesManager?"checked":""}><span>${esc(e.name)}</span></label>`).join("")}</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor</button><button class="btn primary" onclick="saveSalesManagers()">Saqlash</button></div>`);
+}
+async function saveSalesManagers(){
+  const on = new Set([...document.querySelectorAll(".smChk:checked")].map(i=>i.value));
+  for (const e of EMPLOYEES.filter(x=>x.role!=="admin")) { const want = on.has(String(e.id)); if (!!e.salesManager===want) continue;
+    if (CLOUD) { const { error } = await sb.from("profiles").update({ sales_manager: want }).eq("id", e.id); if (error) return toast("Xatolik: "+error.message); }
+    e.salesManager = want; if (String(USER.id)===String(e.id)) USER.salesManager = want; }
+  closeModal(); toast("Saqlandi ✓"); render();
+}
+function openSalesTiers(){
+  openModal(`<h3>📊 KPI bosqichlari</h3><div class="sub">Har oraliqdagi QISM o'z foizida hisoblanadi (bosqichli)</div>
+    <div style="margin-top:12px">${SALES_TIERS.map(t=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:13px">
+      <span style="flex:1">${tierLabel(t)}${t.gift?" 🎁":""}</span>
+      <input type="number" min="0" step="0.1" value="${t.pct}" style="width:80px" onchange="setTierPct('${t.id}', this.value)"><span style="color:var(--muted)">%</span></div>`).join("")}</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
+}
+async function setTierPct(id, v){ const t = SALES_TIERS.find(x=>String(x.id)===String(id)); if (!t) return; const pct = Math.max(0,+v||0);
+  if (CLOUD) { const { error } = await sb.from("sales_tiers").update({ pct }).eq("id", id); if (error) return toast("Xatolik: "+error.message); }
+  t.pct = pct; toast(`${tierLabel(t)}: ${pct}%`); }
+
+/* ================= DIZAYNER HISOBI (3 brend) ================= */
+let DESIGN_BRANDS = [], DESIGN_ENTRIES = [];
+function isDesigner(e){ return e && e.piecework && e.pieceKind === "design"; }
+function isKassir(){ return USER.role === "admin" || isExec(USER.role) || USER.snabRole === "kassir"; }
+async function loadDesign(){
+  if (!CLOUD) return;
+  const [br, en] = await Promise.all([
+    sb.from("design_brands").select("*").order("sort"),
+    sb.from("design_entries").select("*").gte("date", viewMonthStart()).lte("date", viewMonthEnd()).order("date", { ascending:false }),
+  ]);
+  if (br.data) DESIGN_BRANDS = br.data.map(b => ({ id:b.id, name:b.name, price:+b.price, active:b.active }));
+  if (en.data) DESIGN_ENTRIES = en.data.map(x => ({ id:x.id, emp:x.emp, date:x.date, brand:x.brand, price:+x.price, note:x.note, status:x.status||"pending" }));
+}
+function designTotal(empId, onlyApproved=true){
+  return DESIGN_ENTRIES.filter(x => String(x.emp)===String(empId) && (!onlyApproved || x.status==="approved")).reduce((s,x)=>s+x.price,0);
+}
+/* Brendlar bo'yicha jamlanma: {brendId: {n, sum}} */
+function designByBrand(empId){
+  const out = {};
+  DESIGN_ENTRIES.filter(x => String(x.emp)===String(empId) && x.status==="approved").forEach(x => {
+    out[x.brand] = out[x.brand] || { n:0, sum:0 }; out[x.brand].n++; out[x.brand].sum += x.price; });
+  return out;
+}
+function pgDesign(){
+  const me = isDesigner(USER);
+  const canSeeAll = USER.role === "admin" || isExec(USER.role) || isKassir();
+  if (!me && !canSeeAll) return `<div class="card empty">Bu bo'lim faqat dizaynerlar va rahbariyat uchun</div>`;
+  const adminBar = USER.role === "admin" ? `<div class="filters"><button class="btn primary sm" onclick="openDesignBrands()">🎨 Brendlar va narxlar</button></div>` : "";
+  const brandCards = (empId) => { const bb = designByBrand(empId);
+    return `<div class="grid stats" style="margin-bottom:14px">${DESIGN_BRANDS.map(b => { const v = bb[b.id]||{n:0,sum:0};
+      return `<div class="card stat"><div class="lbl">🎨 ${esc(b.name)}</div><div class="val num">${v.n}<small style="font-size:12px;color:var(--muted);font-weight:600"> ta</small></div>
+        <div class="delta" style="color:var(--success)">${fmtMoney(v.sum)} so'm</div></div>`; }).join("")}
+      <div class="card stat"><div class="lbl">${IC.money} Jami (tasdiqlangan)</div><div class="val num" style="color:var(--success);font-size:19px">${fmtMoney(designTotal(empId))}</div>
+        <div class="delta" style="color:${designTotal(empId,false)-designTotal(empId)>0?"var(--gold)":"var(--muted)"}">${designTotal(empId,false)-designTotal(empId)>0?"tasdiq kutmoqda: "+fmtMoney(designTotal(empId,false)-designTotal(empId)):monthLabelLow()}</div></div></div>`; };
+  const myBlock = me ? `${brandCards(USER.id)}
+    ${!isArchive() ? `<div class="card" style="padding:16px;margin-bottom:15px">
+      <b style="font-size:14px">➕ Dizayn yozish</b>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
+        <div style="flex:1;min-width:140px"><label>Brend</label><select id="dsBrand">${DESIGN_BRANDS.filter(b=>b.active).map(b=>`<option value="${b.id}">${esc(b.name)} — ${fmtMoney(b.price)}</option>`).join("")}</select></div>
+        <div style="flex:2;min-width:180px"><label>Izoh (qaysi firma / dizayn nomi)</label><input id="dsNote" placeholder="masalan: Mega do'kon — banner"></div>
+        <div style="flex:1;min-width:130px"><label>Sana</label><input id="dsDate" type="date" value="${TODAY}" max="${TODAY}"></div>
+        <button class="btn primary" onclick="addDesign()">Qo'shish</button></div>
+      ${DESIGN_BRANDS.some(b=>!b.price) ? `<div style="font-size:11.5px;color:var(--gold);margin-top:8px">⚠️ Ba'zi brendlar narxi 0 — admin "Brendlar va narxlar"da kiritishi kerak</div>` : ""}
+    </div>` : ""}
+    <h3 class="section-title">Mening dizaynlarim</h3>${designTable(USER.id, true)}` : "";
+  const designers = EMPLOYEES.filter(e => isDesigner(e) && String(e.id)!==String(USER.id));
+  const mgmt = canSeeAll && designers.length ? `<h3 class="section-title" style="margin-top:18px">Dizaynerlar (${monthLabelLow()})</h3>
+    <div class="card">${designers.map(e => { const pend = DESIGN_ENTRIES.filter(x=>String(x.emp)===String(e.id)&&x.status==="pending").length;
+      return `<div class="fb-item" style="cursor:pointer" onclick="openDesignEmp('${e.id}')">${avatarHtml(e,"sm")}
+        <div class="meta"><b>${esc(e.name)} ${pend?`<span class="tag gold">${pend} ta tasdiq kutmoqda</span>`:""}</b>
+          <span>${DESIGN_BRANDS.map(b=>`${esc(b.name)}: ${(designByBrand(e.id)[b.id]||{n:0}).n}`).join(" · ")}</span></div>
+        <div class="amount num" style="color:var(--success)">${fmtMoney(designTotal(e.id))}</div></div>`; }).join("")}</div>` : "";
+  return adminBar + myBlock + mgmt;
+}
+function designTable(empId, own){
+  const rows = DESIGN_ENTRIES.filter(x => String(x.emp)===String(empId)).sort((a,b)=>b.date.localeCompare(a.date));
+  if (!rows.length) return `<div class="card empty">Hali yozuv yo'q</div>`;
+  const byDate = {}; rows.forEach(r => { (byDate[r.date]=byDate[r.date]||[]).push(r); });
+  return Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).map(date => { const list = byDate[date];
+    return `<div class="card" style="margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:9px;padding:11px 15px;border-bottom:1px solid var(--line);flex-wrap:wrap">
+        <b style="font-size:13.5px">${uzDate(date)}</b>
+        ${list.some(x=>x.status==="pending") && isKassir() && !isArchive() ? `<button class="btn success sm" onclick="decideDesignDay('${empId}','${date}','approved')">✓ Kunni tasdiqlash</button>` : ""}
+        <span class="num" style="margin-left:auto;font-weight:800;color:var(--success)">${fmtMoney(list.filter(x=>x.status==="approved").reduce((s,x)=>s+x.price,0))}</span></div>
+      ${list.map(x => { const b = DESIGN_BRANDS.find(y=>String(y.id)===String(x.brand)); const st = x.status;
+        const stTag = st==="approved"?'<span class="tag success">✓</span>':st==="rejected"?'<span class="tag danger">rad</span>':'<span class="tag gold">kutmoqda</span>';
+        return `<div class="fb-item"><div class="fb-icon" style="background:var(--accent-soft);color:var(--accent)">🎨</div>
+          <div class="meta"><b>${b?esc(b.name):"—"} ${stTag}</b><span>${esc(x.note||"")}</span></div>
+          <div class="amount num" style="${st!=="approved"?"color:var(--muted)":""}">${fmtMoney(x.price)}</div>
+          ${st==="pending" && isKassir() && !isArchive() ? `<button class="btn success sm" onclick="decideDesign('${x.id}','approved')">✓</button><button class="btn ghost sm" onclick="decideDesign('${x.id}','rejected')">✗</button>` : ""}
+          ${(own && st==="pending") || USER.role==="admin" ? `<button class="btn sm" style="color:var(--danger)" onclick="delDesign('${x.id}')">✕</button>` : ""}</div>`; }).join("")}</div>`; }).join("");
+}
+function openDesignEmp(empId){ const e = empById(empId); if (!e) return;
+  openModal(`<h3>${esc(e.name)} — dizaynlar</h3><div class="sub">${DESIGN_BRANDS.map(b=>`${esc(b.name)}: ${(designByBrand(empId)[b.id]||{n:0,sum:0}).n} ta / ${fmtMoney((designByBrand(empId)[b.id]||{sum:0}).sum)}`).join(" · ")}<br>Jami: <b style="color:var(--success)">${fmtMoney(designTotal(empId))}</b></div>
+    <div style="margin-top:12px;max-height:55vh;overflow-y:auto">${designTable(empId,false)}</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`); }
+async function addDesign(){
+  const brandId = $("#dsBrand").value, note = $("#dsNote").value.trim(), date = $("#dsDate").value;
+  if (!brandId) return toast("Brendni tanlang"); if (!note) return toast("Izoh yozing (qaysi firma / dizayn nomi)");
+  const b = DESIGN_BRANDS.find(x=>String(x.id)===String(brandId));
+  const rec = { emp:USER.id, date, brand:+brandId, price:b.price, note, status:"pending" };
+  if (CLOUD) { const { data, error } = await sb.from("design_entries").insert({ emp:USER.id, date, brand:+brandId, price:b.price, note }).select().single(); if (error) return toast("Xatolik: "+error.message); rec.id = data.id; } else rec.id = Date.now();
+  DESIGN_ENTRIES.push(rec); $("#dsNote").value = "";
+  toast(`${b.name}: ${fmtMoney(b.price)} — kassir tasdig'iga yuborildi`); render();
+}
+async function decideDesign(id, status){
+  const x = DESIGN_ENTRIES.find(d=>String(d.id)===String(id)); if (!x) return;
+  if (!isKassir()) return toast("Tasdiqlash huquqi yo'q");
+  if (CLOUD) { const { data, error } = await sb.from("design_entries").update({ status, decided_by:USER.id, decided_at:new Date().toISOString() }).eq("id", x.id).select(); if (error) return toast("Xatolik: "+error.message); if (!data||!data.length) return toast(permErr("supabase-update-20.sql")); }
+  x.status = status; toast(status==="approved"?"Tasdiqlandi ✓":"Rad etildi"); render();
+}
+async function decideDesignDay(empId, date, status){ for (const x of DESIGN_ENTRIES.filter(d=>String(d.emp)===String(empId)&&d.date===date&&d.status==="pending")) await decideDesign(x.id, status); }
+async function delDesign(id){
+  if (CLOUD) { const { error } = await sb.from("design_entries").delete().eq("id", id); if (error) return toast("Xatolik: "+error.message); }
+  DESIGN_ENTRIES = DESIGN_ENTRIES.filter(d=>String(d.id)!==String(id)); closeModal(); render();
+}
+function openDesignBrands(){
+  openModal(`<h3>🎨 Brendlar va dizayn narxi</h3><div class="sub">1 ta dizayn uchun so'm</div>
+    <div style="margin-top:12px">${DESIGN_BRANDS.map(b=>`<div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">
+      <span style="flex:1;font-size:13.5px;font-weight:700">${esc(b.name)}</span>
+      <input type="number" min="0" step="5000" value="${b.price}" style="width:140px" onchange="setBrandPrice('${b.id}', this.value)"><span style="font-size:12px;color:var(--muted)">so'm</span></div>`).join("")}</div>
+    <div style="border-top:1px solid var(--line);padding-top:12px;margin-top:12px;display:flex;gap:8px;align-items:flex-end">
+      <div style="flex:1"><label>Yangi brend</label><input id="dbName" placeholder="Brend nomi"></div>
+      <div><label>Narxi</label><input id="dbPrice" type="number" min="0" value="0" style="width:120px"></div>
+      <button class="btn primary sm" onclick="addBrand()">Qo'shish</button></div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
+}
+async function setBrandPrice(id, v){ const b = DESIGN_BRANDS.find(x=>String(x.id)===String(id)); if (!b) return; const price = Math.max(0,+v||0);
+  if (CLOUD) { const { error } = await sb.from("design_brands").update({ price }).eq("id", id); if (error) return toast("Xatolik: "+error.message); }
+  b.price = price; toast(`${b.name}: ${fmtMoney(price)}`); }
+async function addBrand(){ const name = $("#dbName").value.trim(), price = +$("#dbPrice").value||0; if (!name) return toast("Nomini kiriting");
+  if (CLOUD) { const { data, error } = await sb.from("design_brands").insert({ name, price, sort:DESIGN_BRANDS.length+1 }).select().single(); if (error) return toast("Xatolik: "+error.message); DESIGN_BRANDS.push({ id:data.id, name, price, active:true }); }
+  else DESIGN_BRANDS.push({ id:Date.now(), name, price, active:true });
+  toast("Qo'shildi ✓"); openDesignBrands(); }
 
 /* ================= SNABJENIYA (ta'minot) ================= */
 let CONTRACTORS = [], SNAB_ORDERS = [], SNAB_ITEMS = [], SNAB_PAYS = [], SNAB_MSGS = [];
@@ -2717,22 +2982,27 @@ function openPieceEmps(){
   openModal(`<h3>👥 Kim donabay ishlaydi</h3>
     <div class="sub">Belgilangan xodimlarda "Donabay ish" bo'limi ochiladi</div>
     <div class="emp-pick" style="margin-top:11px;max-height:50vh">${list.map(e=>`
-      <label class="pick-chip"><input type="checkbox" class="pwChk" value="${e.id}" ${e.piecework?"checked":""}>
-        <span>${esc(e.name)}</span></label>`).join("")}</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:13px;width:100%">
+        <input type="checkbox" class="pwChk" value="${e.id}" ${e.piecework?"checked":""} style="width:auto">
+        <span style="flex:1">${esc(e.name)}</span>
+        <select class="pwKind" data-id="${e.id}" style="width:auto;font-size:12px">
+          <option value="work" ${e.pieceKind!=="design"?"selected":""}>Ishlab chiqarish (donabay)</option>
+          <option value="design" ${e.pieceKind==="design"?"selected":""}>Dizayner (brend bo'yicha)</option></select></div>`).join("")}</div>
     <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor</button>
     <button class="btn primary" onclick="savePieceEmps()">Saqlash</button></div>`);
 }
 async function savePieceEmps(){
   const on = new Set([...document.querySelectorAll(".pwChk:checked")].map(i => i.value));
+  const kinds = {}; document.querySelectorAll(".pwKind").forEach(sel => kinds[sel.dataset.id] = sel.value);
   for (const e of EMPLOYEES.filter(x => x.role !== "admin")) {
-    const want = on.has(String(e.id));
-    if (!!e.piecework === want) continue;
+    const want = on.has(String(e.id)), kind = kinds[String(e.id)] || "work";
+    if (!!e.piecework === want && (e.pieceKind||"work") === kind) continue;
     if (CLOUD) {
-      const { error } = await sb.from("profiles").update({ piecework: want }).eq("id", e.id);
+      const { error } = await sb.from("profiles").update({ piecework: want, piece_kind: kind }).eq("id", e.id);
       if (error) { toast("Xatolik: " + error.message); return; }
     }
-    e.piecework = want;
-    if (String(USER.id) === String(e.id)) USER.piecework = want;
+    e.piecework = want; e.pieceKind = kind;
+    if (String(USER.id) === String(e.id)) { USER.piecework = want; USER.pieceKind = kind; }
   }
   closeModal(); toast("Saqlandi ✓"); render();
 }
@@ -4400,7 +4670,8 @@ async function loadAll(){
     pos: p.pos, salary: +p.salary, color: p.color, login: toShort(p.email),
     contract: p.contract_until, fieldWork: !!p.field_work, canReassign: !!p.can_reassign,
     photo: p.photo || null, piecework: !!p.piecework, ordersAccess: p.orders_access || "none",
-    stockAccess: p.stock_access || "none", snabRole: p.snab_role || "none" }));
+    stockAccess: p.stock_access || "none", snabRole: p.snab_role || "none",
+    pieceKind: p.piece_kind || "work", salesManager: !!p.sales_manager }));
   TASKS = (tk.data || []).map(t => {
     const nt = { id: t.id, title: t.title, desc: t.descr, emp: t.emp,
       emps: t.emps || null, by: t.created_by, due: t.due, status: t.status, doneAt: t.done_at,
@@ -4412,7 +4683,7 @@ async function loadAll(){
     if (p && Date.now() - p.at < 12000) { nt.status = p.status; if (p.status === "done") nt.doneAt = nt.doneAt || TODAY; }
     return nt;
   });
-  loadDocTypes(); loadLeaves(); loadPiece(); loadOrders(); loadStock(); loadSnab();
+  loadDocTypes(); loadLeaves(); loadPiece(); loadOrders(); loadStock(); loadSnab(); loadDesign(); loadSales();
   FINEBONUS = (fb.data || []).map(f => ({ id: f.id, emp: f.emp, type: f.type,
     amount: +f.amount, reason: f.reason, date: f.date }));
   ATTENDANCE = (at.data || []).map(a => ({ id: a.id, emp: a.emp, date: a.date,
