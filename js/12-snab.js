@@ -1,6 +1,10 @@
 /* ===== GM Pulse · 12-snab.js — Snabjeniya, postavshik sahifasi ===== */
 /* ================= SNABJENIYA (ta'minot) ================= */
-let CONTRACTORS = [], SNAB_ORDERS = [], SNAB_ITEMS = [], SNAB_PAYS = [], SNAB_MSGS = [];
+let CONTRACTORS = [], SNAB_ORDERS = [], SNAB_ITEMS = [], SNAB_PAYS = [], SNAB_MSGS = [], SNAB_PRODUCTS = [], SNAB_PRICE_LOG = [];
+/* Mahsulotlar bazasini kim ko'radi: admin, ta'minotchi, direktor, rahbar (kassir/zavsklad — yo'q) */
+function seesProducts(){ return ["admin","snab"].includes(snabRole()) || isExec(USER.role); }
+/* Narxni kim tasdiqlaydi: direktor, rahbar, admin */
+function canApprovePrice(){ return USER.role === "admin" || isExec(USER.role); }
 let SNAB_VIEW = { page: "list", contractor: null, order: null }; // list | contractor | order | balance
 function snabRole(){
   if (USER.role === "admin" || isExec(USER.role)) return "admin";
@@ -13,16 +17,26 @@ async function loadSnab(){
   if (!CLOUD || !canSeeSnab()) return;
   const qs = [
     sb.from("contractors").select("*").order("name"),
+    seesProducts() ? sb.from("snab_products").select("*").order("name") : Promise.resolve({ data: [] }),
+    seesProducts() ? sb.from("snab_price_log").select("*").order("date", { ascending:false }) : Promise.resolve({ data: [] }),
     sb.from("snab_orders").select("*").order("created_at", { ascending:false }),
     sb.from("snab_msgs").select("*").order("created_at"),
     seesGoods() ? sb.from("snab_items").select("*") : Promise.resolve({ data: [] }),
     seesPay()   ? sb.from("snab_payments").select("*").order("created_at") : Promise.resolve({ data: [] }),
   ];
-  const [ct, so, sm, si, sp] = await Promise.all(qs);
+  const [ct, spr, spl, so, sm, si, sp] = await Promise.all(qs);
+  if (spr.data) SNAB_PRODUCTS = spr.data.map(p => ({ id:p.id, name:p.name, code:p.code||"", unit:p.unit||"dona", lastPrice:p.last_price!=null?+p.last_price:null, lastContractor:p.last_contractor, lastDate:p.last_date, active:p.active }));
+  if (spl.data) SNAB_PRICE_LOG = spl.data.map(l => ({ id:l.id, product:l.product, price:+l.price, contractor:l.contractor, ord:l.ord, date:l.date }));
   if (ct.data) CONTRACTORS = ct.data.map(c => ({ id:c.id, name:c.name, phone:c.phone, note:c.note, token:c.token, active:c.active }));
   if (so.data) SNAB_ORDERS = so.data.map(o => ({ id:o.id, num:o.num, contractor:o.contractor, title:o.title, status:o.status, by:o.created_by, at:o.created_at }));
   if (sm.data) SNAB_MSGS = sm.data.map(m => ({ id:m.id, ord:m.ord, author:m.author, authorName:m.author_name, text:m.text, kind:m.kind, scope:m.scope, at:m.created_at }));
-  if (si.data) SNAB_ITEMS = si.data.map(i => ({ id:i.id, ord:i.ord, name:i.name, qty:+i.qty, price:+i.price, received:i.received, receivedAt:i.received_at }));
+  if (si.data) SNAB_ITEMS = si.data.map(i => ({ id:i.id, ord:i.ord, name:i.name, qty:+i.qty, price:+i.price, received:i.received, receivedAt:i.received_at,
+    product:i.product, code:i.code||"", prevPrice:i.prev_price!=null?+i.prev_price:null, priceAppr:i.price_appr||"ok" }));
+  if (seesProducts()) {
+    const [pr, pl] = await Promise.all([ sb.from("snab_products").select("*").order("name"), sb.from("snab_price_log").select("*").order("created_at", { ascending:false }).limit(500) ]);
+    if (pr.data) SNAB_PRODUCTS = pr.data.map(p => ({ id:p.id, name:p.name, code:p.code||"", unit:p.unit||"dona", lastPrice:+p.last_price, lastContractor:p.last_contractor, lastDate:p.last_date, active:p.active }));
+    if (pl.data) SNAB_PRICE_LOG = pl.data.map(x => ({ product:x.product, price:+x.price, contractor:x.contractor, ord:x.ord, date:x.date }));
+  }
   if (sp.data) SNAB_PAYS = sp.data.map(p => ({ id:p.id, ord:p.ord, amount:+p.amount, purpose:p.purpose, status:p.status, reqBy:p.requested_by, paidBy:p.paid_by, paidAt:p.paid_at, confirmedAt:p.confirmed_at, at:p.created_at }));
 }
 /* Kontragent balansi: to'langan (tasdiqlangan) − qabul qilingan tovar.
@@ -79,7 +93,9 @@ function exportLedger(cid){
   downloadCSV("oldi-berdi_" + (c?c.name.replace(/\s+/g,"-"):cid), rows);
 }
 const SNAB_ST = {
+  price_wait: ["danger",  "⚠️ Narx oshdi — direktor tasdig'i kutilmoqda"],
   new:        ["muted",   "Yangi — tovar kiritilmagan"],
+  price_wait: ["danger",  "⚠️ Narx oshdi — direktor tasdig'i kutilmoqda"],
   goods_wait: ["gold",    "Tovar kutilmoqda"],
   pay_wait:   ["gold",    "To'lov kutilmoqda (kassir)"],
   sup_wait:   ["info",    "Postavshik tasdig'i kutilmoqda"],
@@ -93,6 +109,7 @@ function snabStatus(o){
   const items = SNAB_ITEMS.filter(i=>String(i.ord)===String(o.id));
   const pays = SNAB_PAYS.filter(p=>String(p.ord)===String(o.id) && p.status!=="rejected");
   if (!items.length && !pays.length) return "new";
+  if (items.some(i => i.priceAppr === "pending")) return "price_wait";   // narx tasdig'i — hamma kutadi
   const goodsWait = items.some(i => !i.received);
   const kasWait = pays.some(p => p.status === "requested");
   const supWait = pays.some(p => p.status === "paid");
@@ -112,9 +129,13 @@ function pgSnab(){
   const nav = inside ? "" : `<div class="snab-top">
     <button class="btn ${SNAB_VIEW.page==="list"?"primary":"ghost"}" onclick="snabGo('list')">👥 Kontragentlar</button>
     <button class="btn ${SNAB_VIEW.page==="balance"?"primary":"ghost"}" onclick="snabGo('balance')">⚖️ Umumiy hisob</button>
+    ${seesProducts() ? `<button class="btn ${SNAB_VIEW.page==="products"?"primary":"ghost"}" onclick="snabGo('products')">📦 Mahsulotlar</button>` : ""}
+    ${seesProducts() ? `<button class="btn ${SNAB_VIEW.page==="products"?"primary":"ghost"}" onclick="snabGo('products')">📦 Mahsulotlar</button>` : ""}
     ${USER.role==="admin" ? `<button class="btn ghost sm" style="flex:0" title="Rollar" onclick="openSnabRoles()">🔑</button>` : ""}</div>`;
   if (SNAB_VIEW.page === "order") return nav + snabOrderView(SNAB_VIEW.order);
   if (SNAB_VIEW.page === "contractor") return nav + snabContractorView(SNAB_VIEW.contractor);
+  if (SNAB_VIEW.page === "products") return nav + snabProductsView();
+  if (SNAB_VIEW.page === "products") return nav + snabProductsView();
   if (SNAB_VIEW.page === "balance") {
     const rows = CONTRACTORS.map(c => ({ c, b: ctBalance(c.id) }));
     const plus = rows.filter(x=>x.b.balance>0).reduce((s,x)=>s+x.b.balance,0);
@@ -143,6 +164,99 @@ function pgSnab(){
         <div class="fb-icon" style="background:var(--accent-soft);color:var(--accent)">🏭</div>
         <div class="meta"><b>${esc(c.name)}</b><span>${n} zakaz${open?` · <span style="color:var(--gold)">${open} ochiq</span>`:""}${c.phone?" · "+esc(c.phone):""}</span></div>
         ${balTag(b.balance)}</div>`; }).join("") || `<div class="empty">Kontragent yo'q — yuqoridan qo'shing</div>`}</div>`;
+}
+/* 📦 MAHSULOTLAR — baza, oxirgi narx, tarix, Excel */
+function snabProductsView(){
+  if (!seesProducts()) return `<div class="card empty">Ruxsat yo'q</div>`;
+  const q = (SNAB_VIEW.q || "").toLowerCase();
+  const list = SNAB_PRODUCTS.filter(p => !q || p.name.toLowerCase().includes(q) || (p.code||"").toLowerCase().includes(q)).sort((a,b)=>a.name.localeCompare(b.name));
+  const canEdit = ["admin","snab"].includes(snabRole());
+  return `<div class="card" style="padding:14px 16px;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input placeholder="🔍 Nomi yoki kodi bo'yicha qidirish" value="${esc(SNAB_VIEW.q||"")}" oninput="SNAB_VIEW.q=this.value;render();document.querySelector('input[placeholder^=\'🔍\']')?.focus()" style="flex:1;min-width:180px">
+      <button class="btn ghost sm" onclick="exportSnabProducts()">⬇ Excel</button>
+      ${canEdit ? `<button class="btn primary sm" onclick="openProductEdit()">➕ Mahsulot</button>` : ""}
+    </div>
+    <div class="card">${list.map(p => { const c = CONTRACTORS.find(x=>String(x.id)===String(p.lastContractor));
+      const hist = SNAB_PRICE_LOG.filter(l=>String(l.product)===String(p.id)).slice(0,5);
+      return `<div class="fb-item" style="cursor:pointer" onclick="openProductHistory('${p.id}')">
+        <div class="fb-icon" style="background:var(--accent-soft);color:var(--accent)">📦</div>
+        <div class="meta"><b>${esc(p.name)} ${p.code?`<span class="tag muted">${esc(p.code)}</span>`:""}</b>
+          <span>${p.lastDate?uzDate(p.lastDate)+" · ":""}${c?esc(c.name)+" · ":""}${hist.length} ta xarid${hist.length>1?` · narx: ${hist.slice().reverse().map(h=>fmtMoney(h.price)).join(" → ")}`:""}</span></div>
+        <div class="amount num">${fmtMoney(p.lastPrice)}<small>/${esc(p.unit)}</small></div>
+        ${canEdit ? `<button class="btn ghost sm" onclick="event.stopPropagation();openProductEdit('${p.id}')">✎</button>` : ""}</div>`; }).join("") || `<div class="empty">Mahsulot yo'q — zakazga tovar qo'shilganda avtomatik qo'shiladi</div>`}</div>`;
+}
+function openProductHistory(id){
+  const p = SNAB_PRODUCTS.find(x=>String(x.id)===String(id)); if (!p) return;
+  const hist = SNAB_PRICE_LOG.filter(l=>String(l.product)===String(id));
+  openModal(`<h3>📦 ${esc(p.name)} ${p.code?`<span class="tag muted">${esc(p.code)}</span>`:""}</h3>
+    <div class="sub">Oxirgi narx: <b>${fmtMoney(p.lastPrice)}</b> / ${esc(p.unit)}</div>
+    <div style="margin-top:12px;max-height:50vh;overflow-y:auto">${hist.map(h => { const c = CONTRACTORS.find(x=>String(x.id)===String(h.contractor)); const o = SNAB_ORDERS.find(x=>String(x.id)===String(h.ord));
+      return `<div class="fb-item"><div class="fb-icon" style="background:var(--surface2)">🧾</div>
+        <div class="meta"><b>${fmtMoney(h.price)}</b><span>${uzDate(h.date)}${c?" · "+esc(c.name):""}${o?" · "+esc(o.num):""}</span></div></div>`; }).join("") || `<div class="empty">Tarix yo'q</div>`}</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
+}
+function openProductEdit(id){
+  const p = id ? SNAB_PRODUCTS.find(x=>String(x.id)===String(id)) : null;
+  openModal(`<h3>${p?"✎ Mahsulotni tahrirlash":"➕ Yangi mahsulot"}</h3>
+    <label>Nomi</label><input id="pdName" value="${p?esc(p.name):""}" placeholder="Futbolka oq">
+    <div style="display:flex;gap:9px"><div style="flex:1"><label>Kodi</label><input id="pdCode" value="${p?esc(p.code):""}" placeholder="FT-001"></div>
+      <div style="flex:1"><label>Birlik</label><input id="pdUnit" value="${p?esc(p.unit):"dona"}"></div></div>
+    <label>Xarid narxi (1 ${p?esc(p.unit):"dona"})</label><input id="pdPrice" type="number" min="0" value="${p?p.lastPrice:0}">
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor</button><button class="btn primary" onclick="saveProduct('${p?p.id:""}')">Saqlash</button></div>`);
+}
+async function saveProduct(id){
+  const name = $("#pdName").value.trim(), code = $("#pdCode").value.trim(), unit = $("#pdUnit").value.trim()||"dona", price = +$("#pdPrice").value||0;
+  if (!name) return toast("Nomini kiriting");
+  if (CLOUD) {
+    if (id) { const { error } = await sb.from("snab_products").update({ name, code, unit, last_price: price }).eq("id", id); if (error) return toast("Xatolik: "+error.message); }
+    else { const { data, error } = await sb.from("snab_products").insert({ name, code, unit, last_price: price, last_date: TODAY }).select().single(); if (error) return toast("Xatolik: "+error.message); SNAB_PRODUCTS.push({ id:data.id, name, code, unit, lastPrice:price, lastDate:TODAY, active:true }); }
+  } else { if (id) Object.assign(SNAB_PRODUCTS.find(x=>String(x.id)===String(id)), { name, code, unit, lastPrice:price }); else SNAB_PRODUCTS.push({ id:Date.now(), name, code, unit, lastPrice:price, lastDate:TODAY, active:true }); }
+  if (id) { const p = SNAB_PRODUCTS.find(x=>String(x.id)===String(id)); if (p) Object.assign(p, { name, code, unit, lastPrice:price }); }
+  closeModal(); toast("Saqlandi ✓"); render();
+}
+function exportSnabProducts(){
+  const rows = [["Nomi","Kodi","Birlik","Oxirgi narx","Oxirgi postavshik","Oxirgi sana","Xaridlar soni"]];
+  SNAB_PRODUCTS.forEach(p => rows.push([p.name, p.code||"", p.unit, p.lastPrice, CONTRACTORS.find(x=>String(x.id)===String(p.lastContractor))?.name||"", p.lastDate||"", SNAB_PRICE_LOG.filter(l=>String(l.product)===String(p.id)).length]));
+  downloadCSV("mahsulotlar_" + TODAY, rows);
+}
+/* Mahsulotni nomi/kodi bo'yicha topish yoki yaratish */
+async function findOrCreateProduct(name, code){
+  // NOM bo'yicha topamiz (kod bo'sh qoldirilsa ham dublikat yaratilmasin). Kod berilsa va bazada yo'q bo'lsa — yozib qo'yamiz.
+  let p = SNAB_PRODUCTS.find(x => x.name.toLowerCase()===name.toLowerCase());
+  if (p) { if (code && !p.code) { p.code = code; if (CLOUD) await sb.from("snab_products").update({ code }).eq("id", p.id); } return p; }
+  if (CLOUD) { const { data, error } = await sb.from("snab_products").insert({ name, code: code||null, last_price: 0 }).select().single(); if (error) { toast("Mahsulot bazaga yozilmadi: "+error.message); return null; } p = { id:data.id, name, code:code||"", unit:"dona", lastPrice:0, active:true }; }
+  else p = { id:Date.now(), name, code:code||"", unit:"dona", lastPrice:0, active:true };
+  SNAB_PRODUCTS.push(p); return p;
+}
+/* Narxni tasdiqlash / rad etish (direktor, rahbar, admin) */
+async function decidePrice(itemId, status){
+  const i = SNAB_ITEMS.find(x=>String(x.id)===String(itemId)); if (!i || !canApprovePrice()) return;
+  if (CLOUD) { const { error } = await sb.from("snab_items").update({ price_appr: status, price_appr_by: USER.id, price_appr_at: new Date().toISOString() }).eq("id", itemId); if (error) return toast("Xatolik: "+error.message); }
+  i.priceAppr = status;
+  if (status === "approved") {
+    // Yangi narx bazada "oxirgi narx" bo'ladi
+    const p = SNAB_PRODUCTS.find(x=>String(x.id)===String(i.product));
+    const o = SNAB_ORDERS.find(x=>String(x.id)===String(i.ord));
+    if (p) { if (CLOUD) { await sb.from("snab_products").update({ last_price: i.price, last_contractor: o?.contractor||null, last_date: TODAY }).eq("id", p.id); await sb.from("snab_price_log").insert({ product: p.id, price: i.price, contractor: o?.contractor||null, ord: i.ord, date: TODAY }); }
+      p.lastPrice = i.price; p.lastDate = TODAY; p.lastContractor = o?.contractor; SNAB_PRICE_LOG.unshift({ product:p.id, price:i.price, contractor:o?.contractor, ord:i.ord, date:TODAY }); }
+    await snabMsg(i.ord, `✓ ${roleLabel(USER.role)} narxni tasdiqladi: ${i.name} — ${fmtMoney(i.prevPrice)} → ${fmtMoney(i.price)}`, "price_ok", "goods");
+    toast("Narx tasdiqlandi ✓ — zakaz davom etadi");
+  } else { await snabMsg(i.ord, `✗ Narx rad etildi: ${i.name} — ${fmtMoney(i.price)} (oldingi ${fmtMoney(i.prevPrice)}). Ta'minotchi qayta ko'rib chiqsin`, "price_rej", "goods"); toast("Narx rad etildi"); }
+  render();
+}
+function siPickProduct(name){
+  const p = SNAB_PRODUCTS.find(x => x.name.toLowerCase() === (name||"").toLowerCase());
+  const c = document.getElementById("siCode"), pr = document.getElementById("siPrice");
+  if (p) { if (c && !c.value) c.value = p.code||""; if (pr && !pr.value) pr.value = p.lastPrice||""; }
+  siPriceHint();
+}
+function siPriceHint(){
+  const name = (document.getElementById("siName")?.value||"").toLowerCase(), price = +(document.getElementById("siPrice")?.value||0), h = document.getElementById("siHint");
+  if (!h) return; const p = SNAB_PRODUCTS.find(x => x.name.toLowerCase() === name);
+  if (!p || !p.lastPrice) { h.innerHTML = p ? "Yangi mahsulot — birinchi xarid narxi bazaga yoziladi" : (name ? "Bazada yo'q — yangi mahsulot sifatida qo'shiladi" : ""); return; }
+  if (!price) { h.innerHTML = `Oxirgi xarid narxi: <b>${fmtMoney(p.lastPrice)}</b>`; return; }
+  h.innerHTML = price > p.lastPrice ? `<span style="color:var(--danger)">⚠️ Oldingi ${fmtMoney(p.lastPrice)} dan qimmat (+${fmtMoney(price-p.lastPrice)}) — direktor tasdig'iga ketadi</span>`
+    : price < p.lastPrice ? `<span style="color:var(--success)">✓ Oldingi ${fmtMoney(p.lastPrice)} dan arzon</span>` : `Oldingi narx bilan bir xil (${fmtMoney(p.lastPrice)})`;
 }
 function snabOrderRow(o){
   const c = CONTRACTORS.find(x=>String(x.id)===String(o.id===o.id&&o.contractor));
@@ -194,31 +308,43 @@ function snabOrderView(oid){
   const paySum = pays.filter(p=>p.status==="confirmed").reduce((s,p)=>s+p.amount,0);
   const b = c ? ctBalance(c.id) : {balance:0};
   const isClosed = o.status === "closed";
-  const canSnab = ["admin","snab"].includes(r) && !isClosed, canZav = ["admin","zavsklad"].includes(r) && !isClosed, canKas = ["admin","kassir"].includes(r) && !isClosed;
+  const priceWait = items.some(i => i.priceAppr === "pending");   // narx tasdig'i kutilmoqda — hamma to'xtaydi
+  const canSnab = ["admin","snab"].includes(r) && !isClosed, canZav = ["admin","zavsklad"].includes(r) && !isClosed && !priceWait, canKas = ["admin","kassir"].includes(r) && !isClosed && !priceWait;
+  const canPay = canSnab && !priceWait;
   // TOVARLAR bloki (kassirga ko'rinmaydi)
   const goodsBlock = seesGoods() ? `<div class="card" style="padding:14px 16px;margin-bottom:12px">
       <b style="font-size:13.5px">📦 Tovarlar</b> <span style="color:var(--muted);font-size:12px">jami ${fmtMoney(goodsSum)} · qabul qilingan ${fmtMoney(recvSum)}</span>
       ${items.map(i=>`<div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;flex-wrap:wrap">
-        <span style="flex:1;min-width:120px">${esc(i.name)} — ${i.qty} × ${fmtMoney(i.price)} = <b>${fmtMoney(i.qty*i.price)}</b></span>
-        ${i.received ? '<span class="tag success">qabul qilindi ✓</span>' : (canZav && !isArchive() ? `<button class="btn success sm" onclick="recvSnabItem('${i.id}')">✓ Qabul qildim</button>` : '<span class="tag gold">zavsklad kutmoqda</span>')}
+        <span style="flex:1;min-width:120px">${esc(i.name)}${i.code?` <span class="tag muted">${esc(i.code)}</span>`:""} — ${i.qty} × ${fmtMoney(i.price)} = <b>${fmtMoney(i.qty*i.price)}</b>
+          ${i.priceAppr==="pending" ? `<br><span class="tag danger">⚠️ Qimmat: ${fmtMoney(i.prevPrice)} → ${fmtMoney(i.price)} (+${fmtMoney(i.price-i.prevPrice)})</span>` : i.priceAppr==="approved" ? ` <span class="tag success" title="Narx oshgan, direktor tasdiqlagan">narx ✓</span>` : i.priceAppr==="rejected" ? ` <span class="tag danger">narx rad etilgan</span>` : ""}</span>
+        ${i.priceAppr==="pending" ? (canApprovePrice() && !isArchive()
+            ? `<button class="btn success sm" onclick="decidePrice('${i.id}','approved')">✓ Narxni tasdiqlash</button><button class="btn ghost sm" onclick="decidePrice('${i.id}','rejected')">✗</button>`
+            : '<span class="tag gold">direktor tasdig\'i kutilmoqda</span>')
+          : i.priceAppr==="rejected" ? '<span class="tag muted">narxni o\'zgartiring</span>'
+          : (i.received ? '<span class="tag success">qabul qilindi ✓</span>' : (canZav && !isArchive() ? `<button class="btn success sm" onclick="recvSnabItem('${i.id}')">✓ Qabul qildim</button>` : (priceWait ? '<span class="tag muted">narx tasdig\'ini kuting</span>' : '<span class="tag gold">zavsklad kutmoqda</span>')))}
         ${canSnab && !i.received ? `<button class="btn sm" style="color:var(--danger)" onclick="delSnabItem('${i.id}')">✕</button>` : ""}</div>`).join("") || `<div style="color:var(--muted);font-size:12px;margin-top:6px">Tovar kiritilmagan</div>`}
       ${canSnab && !isArchive() ? `<details style="margin-top:10px"><summary class="btn ghost sm" style="display:inline-flex;cursor:pointer;list-style:none">➕ Tovar qo'shish</summary>
         <div style="display:flex;gap:7px;margin-top:8px;flex-wrap:wrap;align-items:flex-end">
-        <div style="flex:2;min-width:130px"><label>Tovar</label><input id="siName" placeholder="Futbolka oq"></div>
+        <div style="flex:2;min-width:140px"><label>Tovar (bazadan yoki yangi)</label><input id="siName" list="siProds" placeholder="Futbolka oq" oninput="siPickProduct(this.value)">
+          <datalist id="siProds">${SNAB_PRODUCTS.map(p=>`<option value="${esc(p.name)}">${p.code?esc(p.code)+" · ":""}${fmtMoney(p.lastPrice)}</option>`).join("")}</datalist></div>
+        <div style="flex:1;min-width:80px"><label>Kodi</label><input id="siCode" placeholder="FT-001"></div>
         <div style="flex:1;min-width:70px"><label>Soni</label><input id="siQty" type="number" value="1" min="0.01"></div>
-        <div style="flex:1;min-width:100px"><label>Narxi</label><input id="siPrice" type="number" min="0" placeholder="0"></div>
-        <button class="btn primary sm" onclick="addSnabItem('${o.id}')">Saqlash</button></div></details>` : ""}
+        <div style="flex:1;min-width:100px"><label>Narxi</label><input id="siPrice" type="number" min="0" placeholder="0" oninput="siPriceHint()"></div>
+        <button class="btn primary sm" onclick="addSnabItem('${o.id}')">Saqlash</button></div>
+        <div id="siHint" style="font-size:11.5px;color:var(--muted);margin-top:6px"></div></details>` : ""}
     </div>` : `<div class="card" style="padding:12px 16px;margin-bottom:12px;color:var(--muted);font-size:12.5px">📦 Tovar tafsilotlari sizning rolingizga ko'rsatilmaydi</div>`;
   // TO'LOVLAR bloki (zavskladga ko'rinmaydi)
   const payBlock = seesPay() ? `<div class="card" style="padding:14px 16px;margin-bottom:12px">
       <b style="font-size:13.5px">💳 To'lovlar</b> <span style="color:var(--muted);font-size:12px">tasdiqlangan ${fmtMoney(paySum)}</span>
+      ${priceWait && seesPay() ? `<div style="font-size:12px;color:var(--danger);margin-top:6px">⚠️ Tovar narxi oshgan — direktor tasdiqlamaguncha to'lov so'rash/to'lash mumkin emas</div>` : ""}
       ${pays.map(p=>{ const st = {requested:["gold","kassir kutmoqda"],paid:["info","to'landi — postavshik tasdig'i kutilmoqda"],confirmed:["success","tasdiqlandi ✓"],rejected:["danger","rad etildi"]}[p.status];
         return `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;flex-wrap:wrap">
         <span style="flex:1;min-width:120px"><b>${fmtMoney(p.amount)}</b> — ${esc(p.purpose||"")} <span style="color:var(--muted);font-size:11px">${empById(p.reqBy)?.name.split(" ")[0]||""}</span></span>
         <span class="tag ${st[0]}">${st[1]}</span>
         ${p.status==="requested" && canKas && !isArchive() ? `<button class="btn success sm" onclick="paySnab('${p.id}')">💳 To'ladim</button><button class="btn ghost sm" onclick="rejectSnabPay('${p.id}')">✗</button>` : ""}
         ${p.status==="paid" && r==="admin" ? `<button class="btn ghost sm" title="Postavshik o'rniga tasdiqlash" onclick="confirmSnabPayAdmin('${p.id}')">✓ tasdiq</button>` : ""}</div>`; }).join("") || `<div style="color:var(--muted);font-size:12px;margin-top:6px">To'lov yo'q</div>`}
-      ${canSnab && !isArchive() ? `<details style="margin-top:10px"><summary class="btn ghost sm" style="display:inline-flex;cursor:pointer;list-style:none">💳 To'lov so'rash</summary>
+      ${priceWait && canSnab ? `<div class="tag danger" style="margin-top:10px">⚠️ Narx tasdiqlanmaguncha to'lov so'rab bo'lmaydi</div>` : ""}
+      ${canPay && !isArchive() ? `<details style="margin-top:10px"><summary class="btn ghost sm" style="display:inline-flex;cursor:pointer;list-style:none">💳 To'lov so'rash</summary>
         <div style="display:flex;gap:7px;margin-top:8px;flex-wrap:wrap;align-items:flex-end">
         <div style="flex:1;min-width:110px"><label>Summa</label><input id="spAmt" type="number" min="0" placeholder="0"></div>
         <div style="flex:2;min-width:150px"><label>Nima uchun</label><input id="spPurp" placeholder="masalan: 100 futbolka uchun avans"></div>
@@ -284,12 +410,25 @@ async function addSnabOrder(cid){
   toast(`Zakaz ${num} ochildi`); snabGo("order", rec.id);
 }
 async function addSnabItem(oid){
-  const name = $("#siName").value.trim(), qty = +$("#siQty").value||0, price = +$("#siPrice").value||0;
+  const name = $("#siName").value.trim(), code = ($("#siCode")?.value||"").trim(), qty = +$("#siQty").value||0, price = +$("#siPrice").value||0;
   if (!name || qty<=0) return toast("Tovar va sonini kiriting");
-  const rec = { ord: oid, name, qty, price, received:false };
-  if (CLOUD) { const { data, error } = await sb.from("snab_items").insert({ ord: oid, name, qty, price }).select().single(); if (error) return toast("Xatolik: "+error.message); rec.id = data.id; } else rec.id = Date.now();
+  if (price<=0) return toast("Narxini kiriting");
+  const prod = await findOrCreateProduct(name, code);
+  // NARX NAZORATI: oldingi xarid narxidan 1 so'm ham qimmat bo'lsa — direktor tasdig'i
+  const prev = prod && prod.lastPrice > 0 ? prod.lastPrice : null;
+  const expensive = prev !== null && price > prev;
+  const rec = { ord: oid, name, code, qty, price, received:false, product: prod?.id, prevPrice: prev, priceAppr: expensive ? "pending" : "ok" };
+  if (CLOUD) { const { data, error } = await sb.from("snab_items").insert({ ord: oid, name, code: code||null, qty, price, product: prod?.id||null, prev_price: prev, price_appr: rec.priceAppr }).select().single(); if (error) return toast("Xatolik: "+error.message); rec.id = data.id; } else rec.id = Date.now();
   SNAB_ITEMS.push(rec);
-  await snabMsg(oid, `📦 Tovar qo'shildi: ${name} — ${qty} × ${fmtMoney(price)}`, "goods", "goods");
+  if (expensive) {
+    await snabMsg(oid, `⚠️ NARX OSHDI: ${name} — oldingi ${fmtMoney(prev)} → hozir ${fmtMoney(price)} (+${fmtMoney(price-prev)}). Direktor tasdig'iga yuborildi — tasdiqlanmaguncha zakaz to'xtab turadi`, "price_warn", "goods");
+    toast(`⚠️ Narx oshdi (+${fmtMoney(price-prev)}) — direktor tasdig'iga yuborildi`);
+  } else {
+    // Arzon yoki teng — oxirgi narx yangilanadi, tasdiq kerak emas
+    if (prod && CLOUD) { const o = SNAB_ORDERS.find(x=>String(x.id)===String(oid)); await sb.from("snab_products").update({ last_price: price, last_contractor: o?.contractor||null, last_date: TODAY }).eq("id", prod.id); await sb.from("snab_price_log").insert({ product: prod.id, price, contractor: o?.contractor||null, ord: oid, date: TODAY }); }
+    if (prod) { const o = SNAB_ORDERS.find(x=>String(x.id)===String(oid)); prod.lastPrice = price; prod.lastDate = TODAY; prod.lastContractor = o?.contractor; SNAB_PRICE_LOG.unshift({ product:prod.id, price, contractor:o?.contractor, ord:oid, date:TODAY }); }
+    await snabMsg(oid, `📦 Tovar qo'shildi: ${name}${code?" ("+code+")":""} — ${qty} × ${fmtMoney(price)}${prev!==null&&price<prev?` (arzon: oldingi ${fmtMoney(prev)})`:""}`, "goods", "goods");
+  }
   render();
 }
 async function delSnabItem(id){
@@ -408,4 +547,3 @@ async function supMsg(tok, oid){
   const { data } = await sb.rpc("sup_msg", { tok, order_id: +oid, txt: t });
   if (!data) return toast("Yuborilmadi"); inp.value=""; supplierPage(tok);
 }
-
