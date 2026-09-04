@@ -95,6 +95,7 @@ function notifList(){
       text:`${uzDate(r.date)} — ${leaveKindLabel(r.kind)} so'rovingiz ${r.status==="approved"?"tasdiqlandi":"rad etildi"}`, go:"me" }));
   if (canSeeSnab()) {
     const r = snabRole();
+    if (canApprovePrice()) SNAB_ITEMS.filter(i=>i.priceAppr==="pending").forEach(i => { const o = SNAB_ORDERS.find(x=>String(x.id)===String(i.ord)); if (o) items.push({ ic:"⚠️", cls:"danger", text:`${o.num}: ${i.name} narxi oshdi ${fmtMoney(i.prevPrice)} → ${fmtMoney(i.price)} — tasdiqlash kerak`, go:"snab" }); });
     if (["admin","zavsklad"].includes(r)) SNAB_ITEMS.filter(i=>!i.received).forEach(i => { const o = SNAB_ORDERS.find(x=>String(x.id)===String(i.ord)); if (o && snabStatus(o)!=="closed") items.push({ ic:"📦", cls:"gold", text:`${o.num}: ${i.name} — qabul qilishni kutmoqda`, go:"snab" }); });
     if (["admin","kassir"].includes(r)) SNAB_PAYS.filter(p=>p.status==="requested").forEach(p => { const o = SNAB_ORDERS.find(x=>String(x.id)===String(p.ord)); if (o) items.push({ ic:"💳", cls:"gold", text:`${o.num}: ${fmtMoney(p.amount)} to'lov so'raldi — ${p.purpose||""}`, go:"snab" }); });
     if (["admin","snab"].includes(r)) SNAB_PAYS.filter(p=>p.status==="paid").forEach(p => { const o = SNAB_ORDERS.find(x=>String(x.id)===String(p.ord)); if (o) items.push({ ic:"⏳", cls:"info", text:`${o.num}: ${fmtMoney(p.amount)} to'landi — postavshik tasdig'i kutilmoqda`, go:"snab" }); });
@@ -165,4 +166,3 @@ function exportAttendance(){
   });
   downloadCSV("davomat_" + VIEW_MONTH, rows);
 }
-
