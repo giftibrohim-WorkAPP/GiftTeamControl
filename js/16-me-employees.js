@@ -128,6 +128,7 @@ function pgEmployees(){
   const addBtn = USER.role === "admin"
     ? `<button class="btn primary" onclick="openEmpModal()">${IC.plus} Xodim qo'shish</button>
        <button class="btn ghost" onclick="openDeptModal()">Bo'limlar</button>
+       <button class="btn ghost" onclick="openBackup()" title="Barcha ma'lumotni faylga saqlash / tiklash">💾 Zaxira</button>
        <button class="btn ghost" onclick="openDocTypes()">📄 Hujjatlar ro'yxati</button>
        <button class="btn ghost" onclick="openFineSettings()">⏱ Kechikish jarimasi</button>` : "";
   const cards = scope.map(e => {
