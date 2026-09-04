@@ -85,6 +85,8 @@ function notifList(){
     items.push({ ic:"⏱", cls:"gold", text:`${empById(a.emp).name.split(" ")[0]} — qo'shimcha ${otMinutes(a)} daqiqa tasdiq kutmoqda (${uzDate(a.date)})`, go:"attendance" }));
   ATTENDANCE.filter(a => String(a.emp)===String(USER.id) && !a.out && a.date < TODAY).slice(-3).forEach(a =>
     items.push({ ic:"⚠️", cls:"danger", text:`${uzDate(a.date)} — "Ketdim" bosilmagan, bu kun soati hisoblanmadi. Adminga ayting`, go:"me" }));
+  if (USER.role === "admin" && CLOUD) { let last = null; try { last = +localStorage.getItem("gm_last_backup") || null; } catch(e){}
+    if (!last || Date.now() - last > 7 * 86400000) items.push({ ic:"💾", cls:"gold", text: last ? `Zaxira nusxa ${Math.floor((Date.now()-last)/86400000)} kun oldin olingan — yangilang` : "Zaxira nusxa hech qachon olinmagan — Xodimlar → 💾 Zaxira", go:"employees" }); }
   if (USER.role === "admin") ATTENDANCE.filter(a => !a.out && a.date < TODAY).forEach(a =>
     items.push({ ic:"⚠️", cls:"gold", text:`${empById(a.emp)?.name.split(" ")[0]} — ${uzDate(a.date)} ketish vaqti yo'q (tuzatish kerak)`, go:"attendance" }));
   LEAVE_REQS.filter(r => r.status === "pending" && canDecideLeave(r)).forEach(r =>
@@ -102,6 +104,8 @@ function notifList(){
   }
   (() => { const byEmp = {}; PIECE_ENTRIES.filter(p => p.status==="pending" && canApproveOT({emp:p.emp})).forEach(p => { byEmp[p.emp]=(byEmp[p.emp]||0)+1; });
     Object.entries(byEmp).forEach(([id,n]) => items.push({ ic:"📦", cls:"gold", text:`${empById(id)?.name.split(" ")[0]} — ${n} ta donabay yozuv tasdiq kutmoqda`, go:"piece" })); })();
+  ATTENDANCE.filter(a => a.geoFlag === "fake" && a.date >= isoLocal(new Date(Date.now()-3*86400000)) && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
+    items.push({ ic:"📍", cls:"danger", text:`${empById(a.emp)?.name.split(" ")[0]} — ${uzDate(a.date)} shubhali GPS (aniqlik ${a.geoAcc} m) — tekshiring`, go:"attendance" }));
   ATTENDANCE.filter(a => a.inField && a.inAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
     items.push({ ic:"🚶", cls:"info", text:`${empById(a.emp).name.split(" ")[0]} — tashqaridan kelishni tasdiqlash (${uzDate(a.date)})`, go:"attendance" }));
   ATTENDANCE.filter(a => a.outField && a.outAppr === "pending" && canApproveOT({emp:a.emp}) && ids.includes(String(a.emp))).forEach(a =>
