@@ -100,6 +100,6 @@ http.createServer(async (req, res) => {
     res.setHeader("Content-Type", MIME[".html"]); return res.end(indexHtml); // SPA fallback
   }
   res.setHeader("Content-Type", MIME[path.extname(file)] || "application/octet-stream");
-  if (file.endsWith("sw.js")) res.setHeader("Cache-Control", "no-cache");
+  if (file.endsWith("sw.js") || file.includes("/js/") || file.includes("/css/")) res.setHeader("Cache-Control", "no-cache");
   fs.createReadStream(file).pipe(res);
 }).listen(PORT, () => console.log("GM Pulse server :" + PORT + " | AI: " + (GEMINI_API_KEY ? "yoqilgan (" + GEMINI_MODEL + ")" : "kalit yo'q")));
