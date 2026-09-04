@@ -134,7 +134,8 @@ function pgEmployees(){
     const earn = earnedToDate(e);
     const d = e.dept ? deptById(e.dept) : null;
     const adminBtns = USER.role === "admin"
-      ? `<div style="display:flex;gap:7px"><button class="btn ghost sm" onclick="openEmpModal('${e.id}')">Tahrirlash</button>
+      ? `<div style="display:flex;gap:7px;flex-wrap:wrap"><button class="btn ghost sm" onclick="openEmpModal('${e.id}')">Tahrirlash</button>
+         <button class="btn ghost sm" onclick="openHandover('${e.id}')" title="Ishini boshqa xodimga topshirish">↪ Ishni topshirish</button>
          <button class="btn sm" style="color:var(--danger)" onclick="removeEmp('${e.id}')">Chiqarish</button></div>` : "";
     const contractWarn = `<span style="align-self:flex-start">${contractTag(e.contract, true)}</span>`;
     const docWarn = (CLOUD && DOC_TYPES.length && (USER.role==="admin"||isExec(USER.role)))
@@ -165,4 +166,3 @@ function pgEmployees(){
   return `<div class="filters">${addBtn}<span style="color:var(--muted);font-size:13px">${scope.length} ta xodim</span></div>
           <div class="emp-grid">${cards}</div>`;
 }
-
