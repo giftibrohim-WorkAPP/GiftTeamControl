@@ -4,6 +4,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
+const SERVER_VERSION = "63";
 const PORT = process.env.PORT || 3000;
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
@@ -90,7 +91,7 @@ http.createServer(async (req, res) => {
   }
   if (req.method === "GET" && req.url === "/api/health") {
     res.setHeader("Content-Type", "application/json");
-    return res.end(JSON.stringify({ ok: true, ai: !!GEMINI_API_KEY, model: GEMINI_MODEL }));
+    return res.end(JSON.stringify({ ok: true, v: SERVER_VERSION, ai: !!GEMINI_API_KEY, model: GEMINI_MODEL, supabase: !!SUPABASE_URL }));
   }
   // ---- Statik fayllar ----
   let p = decodeURIComponent((req.url || "/").split("?")[0]);
@@ -101,5 +102,10 @@ http.createServer(async (req, res) => {
   }
   res.setHeader("Content-Type", MIME[path.extname(file)] || "application/octet-stream");
   if (file.endsWith("sw.js") || file.includes("/js/") || file.includes("/css/")) res.setHeader("Cache-Control", "no-cache");
+  // Supabase kalitlari endi js/01-config.js ichida — barcha .js fayllarda joylaymiz
+  if (file.endsWith(".js")) {
+    const txt = fs.readFileSync(file, "utf8").replace(/__SUPABASE_URL__/g, SUPABASE_URL).replace(/__SUPABASE_ANON_KEY__/g, SUPABASE_ANON_KEY);
+    return res.end(txt);
+  }
   fs.createReadStream(file).pipe(res);
 }).listen(PORT, () => console.log("GM Pulse server :" + PORT + " | AI: " + (GEMINI_API_KEY ? "yoqilgan (" + GEMINI_MODEL + ")" : "kalit yo'q")));
