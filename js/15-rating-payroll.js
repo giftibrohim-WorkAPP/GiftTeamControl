@@ -155,8 +155,8 @@ function pgPayroll(){
       <tr style="background:var(--surface2)"><td><b>Jami</b></td><td></td><td></td><td></td><td></td>
         <td class="num"><b>${fmtMoney(totals.base)}</b></td>
         <td class="num" style="color:var(--success)"><b>+${fmtMoney(totals.bonus)}</b></td>
-        <td class="num" style="color:var(--danger)"><b>−${fmtMoney(totals.fine)}</b></td>
-        <td class="num"><b>${fmtMoney(totals.total)}</b></td></tr>
+        <td class="num"><b>${fmtMoney(totals.total)}</b></td>
+        <td class="num" style="color:var(--danger)"><b>${totals.fine ? "−" + fmtMoney(totals.fine) : "—"}</b></td></tr>
     </table></div>`;
 }
 
