@@ -60,6 +60,7 @@ function pgAttendance(){
         <div><span class="sub2">KETDI</span><b class="num">${a.out ?? "—"}</b>
           ${a.outGeo?`<a href="https://maps.google.com/?q=${a.outGeo}" target="_blank" rel="noopener" style="text-decoration:none" title="Ishni tugatgan joy">📍</a>`:""}
           ${!a.out ? (a.date === TODAY ? '<span class="tag gold">ishda</span>' : '<span class="tag danger" title="Ketdim bosilmagan — bu kun uchun soat/pul hisoblanmaydi. Admin tuzatishi mumkin">ketdim bosilmagan ⚠️</span>') : ""}
+          ${a.geoFlag==="fake" ? `<span class="tag danger" title="GPS aniqligi ${a.geoAcc} m — haqiqiy telefonda bunday bo'lmaydi, soxta joylashuv bo'lishi mumkin">📍 shubhali GPS</span>` : a.geoFlag==="weak" ? `<span class="tag gold" title="GPS aniqligi ${Math.round(a.geoAcc)} m — joylashuv ishonchsiz">📍 zaif GPS</span>` : ""}
           ${(() => { const llm = a.lunchBack ? Math.max(0, minutes(a.lunchBack) - minutes(LUNCH_END)) : 0;
             if (!llm) return "";
             if (a.lunchExcused) return `<span class="tag info">obed +${llm} daq · sababli ✓</span>`;
@@ -213,6 +214,13 @@ async function saveAtt(emp, date){
   closeModal(); toast("Davomat saqlandi (admin tuzatdi)"); render();
 }
 // Joylashuvni olish (ruxsat so'raladi; 6 soniyada javob bo'lmasa — joylashuvsiz davom etadi)
+/* GPS aniqlik tekshiruvi: soxta GPS odatda 0-1.5 m deydi (haqiqiy telefon 5-50 m); >300 m — telefon o'zi qayerdaligini bilmaydi */
+function geoFlag(g){
+  if (!g) return null;
+  if (g.acc != null && g.acc <= 1.5) return "fake";
+  if (g.acc != null && g.acc > 300) return "weak";
+  return null;
+}
 function getGeo(){
   if (!navigator.geolocation) return Promise.resolve(null);
   const attempt = (hi, ms) => new Promise(res => navigator.geolocation.getCurrentPosition(
@@ -258,11 +266,11 @@ async function checkIn(){
   const inAppr = inField ? "pending" : "none";
   const rec = { emp: USER.id, date: TODAY, in: t, out: null, late,
                 geo: g.lat.toFixed(5) + "," + g.lng.toFixed(5),
-                inField, inAppr };
+                inField, inAppr, geoAcc: g.acc ?? null, geoFlag: geoFlag(g) };
   if (CLOUD) {
     const { data, error } = await sb.from("attendance")
       .insert({ emp: USER.id, date: TODAY, check_in: t, late, lat: g.lat, lng: g.lng,
-                in_field: inField, in_appr: inAppr })
+                in_field: inField, in_appr: inAppr, geo_acc: g.acc ?? null, geo_flag: geoFlag(g) })
       .select().single();
     if (error) return toast("Xatolik: " + error.message);
     rec.id = data.id;
