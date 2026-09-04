@@ -139,6 +139,69 @@ async function saveTask(){
 }
 
 /* ===== ISHNI TOPSHIRISH — xodim almashganda ish (vazifa, zakaz, rol) yangi odamga o'tadi ===== */
+/* ===== ZAXIRA NUSXA (backup) va TIKLASH ===== */
+const BACKUP_TABLES = ["departments","profiles","settings","tasks","task_comments","fine_bonus","attendance","field_days","leave_requests",
+  "doc_types","emp_docs","piece_jobs","piece_entries","design_brands","design_entries","sales_tiers","sales_entries","products","orders",
+  "stock_items","stock_moves","contractors","snab_orders","snab_items","snab_payments","snab_msgs","snab_products","snab_price_log",
+  "payroll_snapshot","closed_months"];
+function openBackup(){
+  const last = (() => { try { return localStorage.getItem("gm_last_backup"); } catch(e){ return null; } })();
+  const days = last ? Math.floor((Date.now() - +last) / 86400000) : null;
+  openModal(`<h3>💾 Zaxira nusxa</h3>
+    <div class="sub">Barcha ma'lumot (xodimlar, davomat, zakazlar, snabjeniya, balanslar, chat — ${BACKUP_TABLES.length} jadval) bitta faylga saqlanadi.
+      Faylni kompyuteringizda saqlang. Baza buzilsa shundan tiklanadi.</div>
+    <div style="margin:12px 0;padding:10px 12px;background:var(--surface2);border-radius:10px;font-size:12.5px">
+      Oxirgi zaxira: <b style="color:${days==null||days>7?"var(--danger)":"var(--success)"}">${last ? uzDate(isoLocal(new Date(+last))) + (days>7?" — "+days+" kun o'tdi ⚠️":"") : "hech qachon ⚠️"}</b><br>
+      <span style="color:var(--muted)">Tavsiya: har juma bir marta.</span></div>
+    <button class="btn primary" style="width:100%" onclick="doBackup()">⬇ Zaxira nusxani yuklab olish</button>
+    <details style="margin-top:14px"><summary style="cursor:pointer;font-size:13px;color:var(--muted)">⬆ Zaxiradan tiklash (faqat favqulodda holatda)</summary>
+      <div style="font-size:12px;color:var(--muted);margin:8px 0">Avval saqlangan .json faylni tanlang. Mavjud yozuvlar o'zgarmaydi, faqat yo'qolganlari qaytariladi. Xodim loginlari (auth) tiklanmaydi — ular shu Supabase loyihasida bo'lishi kerak.</div>
+      <input type="file" id="bkFile" accept=".json">
+      <button class="btn ghost sm" style="margin-top:8px" onclick="doRestore()">Tiklashni boshlash</button>
+      <div id="bkLog" style="font-size:12px;margin-top:8px;max-height:200px;overflow-y:auto"></div></details>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
+}
+async function doBackup(){
+  if (!CLOUD) return toast("Faqat Supabase rejimida");
+  toast("Zaxira tayyorlanmoqda...");
+  const out = { app: "GM Pulse", version: "v65", date: new Date().toISOString(), tables: {} };
+  let total = 0, failed = [];
+  for (const t of BACKUP_TABLES) {
+    try {
+      let rows = [];
+      if (t === "profiles") { const { data } = await sb.rpc("backup_profiles"); rows = data || []; }
+      else { let from = 0; while (true) { const { data, error } = await sb.from(t).select("*").range(from, from + 999); if (error) throw error; rows.push(...(data||[])); if (!data || data.length < 1000) break; from += 1000; } }
+      out.tables[t] = rows; total += rows.length;
+    } catch(e) { failed.push(t); out.tables[t] = []; }
+  }
+  const blob = new Blob([JSON.stringify(out)], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `gm-pulse-zaxira_${TODAY}.json`; a.click(); URL.revokeObjectURL(a.href);
+  try { localStorage.setItem("gm_last_backup", String(Date.now())); } catch(e){}
+  toast(`Zaxira yuklandi: ${total} qator, ${BACKUP_TABLES.length - failed.length} jadval` + (failed.length ? ` (o'qilmadi: ${failed.join(", ")})` : " ✓"));
+  openBackup();
+}
+async function doRestore(){
+  if (!CLOUD) return toast("Faqat Supabase rejimida");
+  const f = document.getElementById("bkFile")?.files?.[0]; if (!f) return toast("Faylni tanlang");
+  if (!confirm("DIQQAT: zaxiradan tiklash boshlanadi. Mavjud yozuvlar o'zgarmaydi, faqat yo'qolganlari qaytariladi. Davom etilsinmi?")) return;
+  let data; try { data = JSON.parse(await f.text()); } catch(e) { return toast("Fayl o'qilmadi"); }
+  if (!data || !data.tables) return toast("Bu zaxira fayli emas");
+  const log = document.getElementById("bkLog"); const say = m => { if (log) log.innerHTML += m + "<br>"; };
+  say(`Fayl: ${data.date ? data.date.slice(0,10) : "?"}`);
+  let restored = 0;
+  for (const t of BACKUP_TABLES) {      // bog'liqlik tartibida (ota jadvallar avval)
+    const rows = data.tables[t]; if (!rows || !rows.length) continue;
+    for (let i = 0; i < rows.length; i += 500) {
+      const chunk = rows.slice(i, i + 500);
+      const { data: n, error } = await sb.rpc("restore_table", { p_table: t, p_rows: chunk });
+      if (error) { say(`✗ ${t}: ${error.message}`); break; }
+      restored += n || 0;
+    }
+    say(`✓ ${t}: ${rows.length} qator tekshirildi`);
+  }
+  say(`<b>Tiklandi: ${restored} yangi qator.</b> Sahifani yangilang (Ctrl+Shift+R).`);
+  toast(`Tiklash tugadi: ${restored} qator`);
+}
 function handoverPreview(fromId){
   const openT = TASKS.filter(t => isTaskDoer(t, fromId) && ["new","progress","review"].includes(t.status));
   const given = TASKS.filter(t => String(t.by)===String(fromId) && ["new","progress","review"].includes(t.status));
