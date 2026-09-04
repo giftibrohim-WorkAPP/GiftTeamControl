@@ -76,6 +76,33 @@ async function reopenMonth(){
   else CLOSED_MONTHS.delete(ym);
   toast("Oy qayta ochildi"); render();
 }
+/* KO'PRIK: server (SQL calc_payroll) va brauzer (earnedLive) hisobini yonma-yon solishtirish.
+   Xodimga ko'rinadigan raqam O'ZGARMAYDI — bu faqat admin tekshiruvi. Hamma ✓ bo'lsa serverga o'tamiz. */
+async function comparePayroll(){
+  if (!CLOUD) return toast("Faqat Supabase rejimida");
+  toast("Server hisoblanmoqda...");
+  const { data, error } = await sb.rpc("calc_payroll", { p_month: viewMonthStart() });
+  if (error) return toast(permErrMsg("Server hisobi ishlamadi: " + error.message, "supabase-update-28.sql"));
+  const rows = EMPLOYEES.filter(e => e.role !== "admin").map(e => {
+    const b = earnedLive(e); const s = (data || []).find(x => String(x.emp) === String(e.id));
+    const cmp = (k1, k2) => s ? Math.abs((+b[k1]) - (+s[k2])) : null;
+    const dTotal = cmp("total","total"), dHours = cmp("hours","hours"), dFine = s ? Math.abs(b.fine - (+s.manual_fine + +s.late_fine)) : null;
+    const okAll = s && dTotal < 2 && dHours < 0.01 && dFine < 2;
+    return { e, b, s, dTotal, dHours, dFine, okAll };
+  });
+  const bad = rows.filter(r => !r.okAll).length;
+  openModal(`<h3>🔬 Hisob solishtiruvi — ${monthLabel()}</h3>
+    <div class="sub">Brauzer (hozirgi) ↔ Server (SQL). ${bad ? `<b style="color:var(--danger)">${bad} ta farq</b>` : `<b style="color:var(--success)">Hammasi mos ✓</b>`} — xodimlar hozircha brauzer hisobini ko'radi.</div>
+    <div style="max-height:60vh;overflow:auto;margin-top:10px">
+      <table class="md-t" style="display:table;width:100%"><tr><td>Xodim</td><td class="r">Soat (B/S)</td><td class="r">Jarima (B/S)</td><td class="r">Maosh (B/S)</td><td></td></tr>
+      ${rows.map(r => `<tr style="${r.okAll?"":"background:rgba(212,72,72,.08)"}">
+        <td>${esc(r.e.name)}</td>
+        <td class="num" style="text-align:right">${r.b.hours.toFixed(2)} / ${r.s?(+r.s.hours).toFixed(2):"—"}</td>
+        <td class="num" style="text-align:right">${fmtMoney(r.b.fine)} / ${r.s?fmtMoney(+r.s.manual_fine + +r.s.late_fine):"—"}</td>
+        <td class="num" style="text-align:right">${fmtMoney(r.b.total)} / ${r.s?fmtMoney(+r.s.total):"—"}</td>
+        <td>${r.okAll ? '<span class="tag success">✓</span>' : `<span class="tag danger">farq ${r.dTotal!=null?fmtMoney(Math.round(r.dTotal)):"?"}</span>`}</td></tr>`).join("")}</table></div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Yopish</button></div>`);
+}
 function pgPayroll(){
   const scope = scopeEmployees();
   const diffCell = d => {
@@ -110,7 +137,8 @@ function pgPayroll(){
     ${isMonthClosed() ? `<div class="archive-bar">🔒 ${monthLabel()} YOPILGAN — raqamlar muzlatilgan (oylik/jarima narxi o'zgarsa ham bu oy o'zgarmaydi)
         ${USER.role==="admin" ? `<button class="btn ghost sm" onclick="reopenMonth()">↩ Qayta ochish</button>` : ""}</div>` : ""}
     <div class="filters"><button class="btn ghost sm" onclick="exportPayroll()">⬇ Excel (CSV) yuklab olish</button>
-      ${USER.role==="admin" && !isMonthClosed() ? `<button class="btn primary sm" onclick="closeMonth()">🔒 ${monthLabel()} oyini yopish</button>` : ""}</div>
+      ${USER.role==="admin" && !isMonthClosed() ? `<button class="btn primary sm" onclick="closeMonth()">🔒 ${monthLabel()} oyini yopish</button>` : ""}
+      ${USER.role==="admin" && CLOUD ? `<button class="btn ghost sm" onclick="comparePayroll()" title="Server va brauzer hisobini solishtirish">🔬 Solishtirish</button>` : ""}</div>
     <div class="pay-cards">${scope.map(e => { const r = earnedToDate(e); return `
       <div class="card pay-card">
         <div class="top">${avatarHtml(e,"sm")}<div><b>${esc(e.name)}</b><span>oylik ${fmtMoney(e.salary)}</span></div>
@@ -217,4 +245,3 @@ function pgDashboard(){
   if (USER.role === "boshliq") personal = `<h3 class="section-title">Mening shaxsiy ko'rsatkichlarim</h3>` + personalBlock(USER);
   return ((USER.role==="admin"||isExec(USER.role)) ? companyTabs() : "") + stats + charts + kpiTable + personal;
 }
-
