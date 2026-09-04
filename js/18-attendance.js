@@ -331,10 +331,14 @@ async function checkOut(){
 /* Obeddan qaytish — 14:00 gacha bosilishi kerak */
 const LUNCH_START = "13:00";
 async function checkLunch(){
-  const a = ATTENDANCE.find(x => x.emp === USER.id && x.date === TODAY);
-  if (!a || a.out || a.lunchBack) return;
+  if (__attBusy) return; __attBusy = true; setTimeout(() => __attBusy = false, 4000);
+  const a = ATTENDANCE.find(x => String(x.emp) === String(USER.id) && x.date === TODAY);
+  if (!a) { __attBusy = false; return toast("Avval \"Keldim\" ni bosing"); }
+  if (a.out) { __attBusy = false; return toast("Bugun allaqachon ketgansiz"); }
+  if (a.lunchBack) { __attBusy = false; return toast("Obeddan qaytish allaqachon belgilangan: " + a.lunchBack); }
+  if (!a.id && CLOUD) { __attBusy = false; toast("Ma'lumot yangilanmoqda — qayta bosing"); await loadAll(); render(); return; }
   toast("Joylashuv aniqlanmoqda...");
-  if (!(await geoGuard())) return;
+  if (!(await geoGuard())) { __attBusy = false; return; }
   const now = new Date();
   const t = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
   const over = Math.max(0, minutes(t) - minutes(LUNCH_END)); // 14:00 dan keyingi ortiqcha
@@ -596,4 +600,3 @@ async function decideField(emp, date, which, status){
     : `Tashqaridan ${which === "in" ? "kelish" : "ketish"} rad etildi`);
   render();
 }
-
