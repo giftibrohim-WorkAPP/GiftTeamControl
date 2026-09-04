@@ -31,6 +31,7 @@ function mapAttendance(rows){
     excuseNote: a.excuse_note, excuseReq: a.excuse_req || "none",
     excuseAt: a.excuse_at, excuseLate: !!a.excuse_late, adminExcused: !!a.admin_excused,
     inField: !!a.in_field, outField: !!a.out_field, inAppr: a.in_appr || "none", outAppr: a.out_appr || "none",
+    geoAcc: a.geo_acc != null ? +a.geo_acc : null, geoFlag: a.geo_flag || null,
     outGeo: (a.out_lat != null && a.out_lng != null) ? a.out_lat.toFixed(5) + "," + a.out_lng.toFixed(5) : null,
     geo: (a.lat != null && a.lng != null) ? a.lat.toFixed(5) + "," + a.lng.toFixed(5) : null }));
 }
