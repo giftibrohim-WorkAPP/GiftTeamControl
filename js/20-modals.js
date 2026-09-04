@@ -138,6 +138,70 @@ async function saveTask(){
   closeModal(); toast("Vazifa berildi"); go("tasks");
 }
 
+/* ===== ISHNI TOPSHIRISH — xodim almashganda ish (vazifa, zakaz, rol) yangi odamga o'tadi ===== */
+function handoverPreview(fromId){
+  const openT = TASKS.filter(t => isTaskDoer(t, fromId) && ["new","progress","review"].includes(t.status));
+  const given = TASKS.filter(t => String(t.by)===String(fromId) && ["new","progress","review"].includes(t.status));
+  const pendPiece = PIECE_ENTRIES.filter(p => String(p.emp)===String(fromId) && p.status==="pending");
+  const pendDesign = DESIGN_ENTRIES.filter(d => String(d.emp)===String(fromId) && d.status==="pending");
+  const snabO = SNAB_ORDERS.filter(o => String(o.by)===String(fromId) && o.status!=="closed");
+  const e = empById(fromId);
+  const roles = [];
+  if (e.snabRole && e.snabRole!=="none") roles.push({snab:"Ta'minotchi",kassir:"Kassir",zavsklad:"Zavsklad"}[e.snabRole]);
+  if (e.salesManager) roles.push("Sotuv menejeri");
+  if (e.piecework) roles.push(e.pieceKind==="design" ? "Dizayner" : "Donabay ish");
+  if (e.ordersAccess && e.ordersAccess!=="none") roles.push("Zakazlar: "+e.ordersAccess);
+  if (e.stockAccess && e.stockAccess!=="none") roles.push("Sklad: "+e.stockAccess);
+  if (e.canReassign) roles.push("Vazifa o'tkaza oladi");
+  return { openT, given, pendPiece, pendDesign, snabO, roles, blocked: pendPiece.length + pendDesign.length };
+}
+function openHandover(fromId){
+  const e = empById(fromId); if (!e) return;
+  const pv = handoverPreview(fromId);
+  const others = EMPLOYEES.filter(x => x.role !== "admin" && String(x.id)!==String(fromId));
+  const blockedSum = pv.pendPiece.reduce((s,p)=>s+p.qty*p.price,0) + pv.pendDesign.reduce((s,d)=>s+d.price,0);
+  openModal(`<h3>↪ Ishni topshirish</h3>
+    <div class="sub"><b>${esc(e.name)}</b> (${esc(e.pos)}) ishini boshqa xodimga o'tkazish. Ism, oylik, davomat, tarix, hujjatlar o'tMAYdi — faqat ish.</div>
+    ${pv.blocked ? `<div class="archive-bar" style="border-color:var(--danger);color:var(--danger);background:rgba(212,72,72,.1);margin-top:12px">
+        ⛔ Topshirib bo'lmaydi: ${e.name.split(" ")[0]}da <b>${pv.blocked} ta tasdiqlanmagan</b> donabay/dizayn yozuvi bor (${fmtMoney(blockedSum)} so'm).
+        Avval kassir/boshliq tasdiqlasin yoki rad etsin — bu uning ish haqi.</div>` : ""}
+    <div style="margin-top:12px;font-size:13px;line-height:1.7">
+      <b>Nima o'tadi:</b><br>
+      📋 Ochiq vazifalar (mas'ul): <b>${pv.openT.length}</b> ta<br>
+      📝 U bergan ochiq vazifalar (tasdiqlovchi): <b>${pv.given.length}</b> ta<br>
+      🏭 Snabjeniya ochiq zakazlari: <b>${pv.snabO.length}</b> ta<br>
+      🔑 Rollar va ruxsatlar: ${pv.roles.length ? pv.roles.map(r=>`<span class="tag info">${esc(r)}</span>`).join(" ") : "yo'q"}<br>
+      <span style="color:var(--muted)">Bajarilgan/yopilgan vazifalar, davomat, maosh, jarima/bonus, arxiv — eski xodimda qoladi. Topshirishdan keyingi donabay/dizayn/sotuv yozuvlari yangi xodimga hisoblanadi.</span>
+    </div>
+    <label style="margin-top:12px">Kimga topshiriladi</label>
+    <select id="hoTo">${others.map(x=>`<option value="${x.id}">${esc(x.name)} — ${esc(x.pos)}</option>`).join("")}</select>
+    <div style="font-size:12px;color:var(--gold);margin-top:8px">⚠️ Topshirilgach ${e.name.split(" ")[0]} faolsizlantiriladi (ro'yxatdan chiqadi, tizimga kira olmaydi, ma'lumoti va tarixi saqlanadi).</div>
+    <div class="foot"><button class="btn ghost" onclick="closeModal()">Bekor</button>
+      ${pv.blocked ? "" : `<button class="btn primary" onclick="doHandover('${fromId}')">↪ Topshirish</button>`}</div>`);
+}
+async function doHandover(fromId){
+  const toId = $("#hoTo").value; const from = empById(fromId), to = empById(toId);
+  if (!from || !to) return toast("Xodim topilmadi");
+  const pv = handoverPreview(fromId);
+  if (pv.blocked) return toast("Tasdiqlanmagan yozuvlar bor");
+  if (!confirm(`${from.name} → ${to.name}\n\n${pv.openT.length} vazifa, ${pv.snabO.length} snab zakaz, ${pv.roles.length} rol o'tkaziladi.\n${from.name.split(" ")[0]} faolsizlantiriladi.\n\nDavom etilsinmi?`)) return;
+  if (CLOUD) {
+    const { data, error } = await sb.rpc("handover_work", { p_from: fromId, p_to: toId });
+    if (error) return toast("Xatolik: " + error.message);
+    await loadAll();
+  } else {
+    pv.openT.forEach(t => { if (String(t.emp)===String(fromId)) t.emp = to.id; if (Array.isArray(t.emps)) t.emps = t.emps.map(x => String(x)===String(fromId) ? to.id : x); });
+    pv.given.forEach(t => t.by = to.id);
+    pv.snabO.forEach(o => o.by = to.id);
+    if (from.snabRole!=="none") to.snabRole = from.snabRole;
+    to.salesManager = to.salesManager || from.salesManager; if (from.piecework) { to.piecework = true; to.pieceKind = from.pieceKind; }
+    if (from.ordersAccess!=="none") to.ordersAccess = from.ordersAccess; if (from.stockAccess!=="none") to.stockAccess = from.stockAccess;
+    to.canReassign = to.canReassign || from.canReassign;
+    from.snabRole="none"; from.salesManager=false; from.piecework=false; from.ordersAccess="none"; from.stockAccess="none"; from.canReassign=false;
+    EMPLOYEES = EMPLOYEES.filter(x => String(x.id)!==String(fromId));
+  }
+  closeModal(); toast(`Ish topshirildi: ${from.name.split(" ")[0]} → ${to.name.split(" ")[0]} ✓`); render();
+}
 function openEmpModal(id){
   id = id || "";
   const e = id ? empById(id) : null;
@@ -224,4 +288,3 @@ async function confirmRemove(id){
   EMPLOYEES = EMPLOYEES.filter(e => String(e.id) !== String(id));
   closeModal(); toast("Xodim tizimdan chiqarildi"); render();
 }
-
